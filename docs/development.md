@@ -398,6 +398,27 @@ npm run test -w apps/desktop --
 npm run build -w apps/desktop --
 ```
 
+Windows uses a frameless main window with minimize, maximize/restore, and close
+buttons in the existing app header. The native menu is hidden; menu keyboard
+shortcuts still work. Header whitespace drags the window, and double-clicking
+it maximizes/restores. macOS and Linux keep their existing window presentation.
+After building, validate native Windows controls with an isolated source profile
+(no installed app or saved sign-in is touched):
+
+```sh
+node --import tsx .github/scripts/smoke-desktop-windows-chrome.mjs
+```
+
+Check dragging and edge resizing on a Windows desktop, plus header actions with
+the sidebar collapsed, the workspace files pane open, light/dark themes, and
+zoom. The automated smoke covers native minimize/maximize/restore/close,
+fullscreen and zoom, connection/sign-in screens, and chat header controls down
+to a 420px window with a collapsed sidebar.
+It also checks Windows `WM_NCHITTEST` at each button: Chromium-injected clicks
+alone bypass native drag regions and can pass even when physical clicks fail.
+Keep the window controls after the page content in DOM order so their `no-drag`
+region excludes the underlying headers from Electron's native drag region.
+
 The connect screen discovers local servers in the background at ports 4718
 and 4717, plus the app port in the manager's public installation state. Custom
 manager locations follow `OVERTCHAT_CONFIG_DIR` and `OVERTCHAT_HOME`; discovery
@@ -527,6 +548,23 @@ microphone, desktop integration, and upgrade checks in the release runbook.
 Set `DESKTOP_SMOKE_UPGRADE_DEB` to a higher-version candidate to install it
 between the first two launches and verify encrypted sign-in survives; this
 test requires noninteractive `sudo apt-get` access in an isolated test system.
+
+### Windows packaging and qualification
+
+On Windows x64, use Node 22 and npm 10.9.8 from the repository root:
+
+```powershell
+npm ci
+npm run typecheck -w apps/desktop --
+npm run test -w apps/desktop --
+npm run package:windows -w apps/desktop --
+node --import tsx .github/scripts/package-desktop-windows.mjs
+```
+
+The EXE, checksums, and `stable.yml` are written to `apps/desktop/release/`.
+No signing credentials are required. See [Windows release validation](release.md#desktop-windows-release)
+for the disposable-account installer/update smoke and interactive Windows checks.
+The desktop workflow runs that smoke on a Windows runner for every relevant PR.
 
 ## Speech
 
