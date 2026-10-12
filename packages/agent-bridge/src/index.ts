@@ -6,6 +6,7 @@ import type {
   AgentRuntimeCursor,
   AgentRuntimeEnvelope,
   AgentRuntimeStatus,
+  AgentResponsePhase,
   AgentSessionSync,
   AgentSessionCommand,
   AgentSessionLaunchConfig,
@@ -88,6 +89,7 @@ export type AgentDaemonSessionDescriptor = AgentDaemonWorkspaceDescriptor & {
 export type AgentSessionDirectoryEntry = {
   sessionId: string;
   runtimeStatus: AgentRuntimeStatus;
+  responsePhase?: AgentResponsePhase;
 };
 
 export type AgentDaemonRequest =
@@ -466,11 +468,23 @@ export function isAgentRuntimeEnvelope(
   }
   return value.type === "snapshot"
     ? isNonEmptyString(value.data.sessionId) &&
+        hasValidResponsePhase(value.data.activeTurn) &&
         ["idle", "running", "exited"].includes(String(value.data.status))
     : isNonEmptyString(value.data.type) &&
+      (value.data.type !== "overtchat_status" || hasValidResponsePhase(value.data)) &&
       (value.data.type !== "overtchat_turn_delta" || isAgentTurnDelta(value.data)) &&
       (value.data.type !== "usage_update" ||
         agentUsageUpdateSchema.safeParse(Reflect.get(value.data, "usage")).success);
+}
+
+/** The optional phase keeps existing snapshots and journals readable. */
+function hasValidResponsePhase(value: unknown): boolean {
+  return (
+    value === undefined || value === null ||
+    (isRecord(value) &&
+      (value.phase === undefined ||
+        value.phase === "responding" || value.phase === "waiting"))
+  );
 }
 
 export function isAgentSessionDirectoryEntry(
@@ -479,6 +493,7 @@ export function isAgentSessionDirectoryEntry(
   return (
     isRecord(value) &&
     isNonEmptyString(value.sessionId) &&
+    hasValidResponsePhase({ phase: value.responsePhase }) &&
     ["idle", "running", "exited"].includes(String(value.runtimeStatus))
   );
 }
@@ -495,6 +510,7 @@ export function isAgentSessionSync(value: unknown): value is AgentSessionSync {
     return (
       isRecord(value.snapshot) &&
       isNonEmptyString(value.snapshot.sessionId) &&
+      hasValidResponsePhase(value.snapshot.activeTurn) &&
       ["idle", "running", "exited"].includes(String(value.snapshot.status))
     );
   }
