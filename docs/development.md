@@ -620,24 +620,68 @@ Build STT with `docker compose --profile stt build stt-cpu` or
 
 ### Realtime voice
 
-Voice authorization is bound to the authenticated socket, independently of the
-browser's model field and pooled handler state.
-Failed transcript saves stay pending and retry with bounded exponential delay,
-including after End while the page remains open; successful saves still update
-the parent chat view. Reloading the page discards unsaved in-memory retries.
-Non-retryable failures require Retry saving.
+Voice can be started and ended in saved text chats. Both input modes call
+`apps/web/lib/chat/run.ts`: model settings, system instructions, tools,
+compaction, message IDs, search indexing, and generation usage share the normal
+chat path. A versioned response-style hint is persisted on each voice user turn;
+conversion replays that hint on its original turn without modifying the system
+prompt or prior turns. Existing `kind=voice` records need no content migration
+and can be continued with text on web, desktop, and mobile.
+
+The pinned Hugging Face engine still handles PCM transport, STT, turn detection,
+and TTS. Its authenticated bridge supplies only the latest committed user input;
+server-owned history and tool execution replace browser transcript uploads. The
+browser receives canonical message snapshots over `/api/voice/events`. End
+revokes the connection, aborts generation, and waits for it to settle before
+returning to text. A 90-second session lease expires abandoned connections;
+heartbeats renew it while the authenticated event reader stays connected.
+Delivery and cancellation remain process-local, matching the single-replica
+chat deployment. SQLite remains the durable source of truth.
+
+Migration 0020 adds leases only. API level 3 and voice ticket version 2 require
+updating bundled clients and the voice image together; obsolete browser history
+uploads return 410 with a reload instruction. Temporary chats and native mobile
+microphone transport retain their existing availability limits.
 
 Run the focused regressions and build the pinned engine image:
 
 ```sh
-npm run test -w apps/web -- lib/voice lib/speech/proxy.test.ts app/api/voice app/api/internal/voice lib/db/voiceChats.test.ts
+npm run test -w apps/web -- lib/voice lib/speech/proxy.test.ts app/api/voice app/api/internal/voice lib/db/voiceSessions.test.ts lib/db/chatTurns.test.ts lib/chat/response-style.test.ts app/api/chat/route.test.ts
 docker compose -f voice/compose.test.yml build voice
 docker run --rm --entrypoint python -v "$PWD/voice:/tests:ro" -w /tests overtchat-voice:test -B -m unittest discover -s /tests -p 'test_*.py'
 ```
 
+Sending text during voice interrupts the current response immediately: playback
+is cleared, late audio is filtered by response ID, and the replacement waits
+for realtime cancellation and any targeted canonical generation to settle.
+Typing alone does not interrupt. A completed written answer remains intact if
+only its playback is interrupted; unfinished generation retains its partial
+answer. Pending submissions remain visible until canonical acceptance, and
+rapid sends are serialized. The interruption route can wait for completion of
+its specific target; it never cancels a later turn.
+Session cleanup also checks generation ownership, so a late End after lease
+expiry cannot cancel a newer text response. Text submitted before voice connects
+or after startup fails stays in the composer. Temporary mode cannot be toggled
+during voice, and the per-message force-search control is disabled; automatic
+search remains available through the shared tool loop. Historical chat kinds
+remain in storage for compatibility but no longer produce separate voice badges.
+
+Voice startup also has a component regression test under React Strict Mode,
+which replays effect setup and cleanup in development. Run
+`npm run test -w apps/web -- components/chat/RealtimeVoiceSession.test.ts`
+when changing session startup or cleanup. It covers duplicate setup, delayed
+grants during configuration changes, End during startup, and actionable
+session conflicts. Production-build browser tests do not exercise this replay.
+
 The opt-in browser integration test uses real CPU Parakeet and Kokoro, a
 controlled text provider, the app's real authorization/persistence routes, and
-Chromium audio playback. It uses the normal isolated E2E database and does not
+Chromium audio playback. It checks text → voice → text in the same conversation,
+system-prompt equality, durable style replay, and speech/model recovery. It also
+records input sent to real Kokoro to verify streaming citation markers are
+removed from speech while remaining in canonical history. The speech projection
+handles literal and Unicode markers split across provider chunks; run
+`npm run test -w apps/web -- lib/voice/speech-text.test.ts`
+for the chunk-boundary cases. The browser test uses the normal isolated E2E database and does not
 touch a managed installation. Start speech services first; the test starts the
 voice engine after the app is ready for engine warmup:
 
@@ -650,9 +694,24 @@ VOICE_LIVE_TEST=1 VOICE_URL=http://127.0.0.1:18765 \
 docker compose -f voice/compose.test.yml down
 ```
 
-Set `VOICE_LIVE_MODEL_URL=http://127.0.0.1:8001/v1` on that test command to also
-exercise a complete spoken turn through an existing local vLLM server. The test
-discovers its model and creates only an isolated E2E model configuration.
+For a real-model run, add `VOICE_LIVE_MODEL_URL=http://<vllm-host>:8000/v1`
+to the environment above and run `voice-model-live.spec.ts`. This separate test
+uses the live model for every answer and tool decision, verifies text → spoken
+question → text context recall, unchanged request prefixes and tools, and a
+memory-tool call during voice. A transparent proxy records provider-reported
+usage and model response timing; the test attaches these alongside persisted
+usage and browser audio timing. Cache hits are observed, not required: they
+depend on the server configuration and cache state. The test discovers the
+first served model unless `VOICE_LIVE_MODEL` selects one explicitly. It creates
+only an isolated E2E model configuration and never changes the user's models.
+
+Set `VOICE_LIVE_EXTERNAL=1` to reuse a separately started voice worker at
+`VOICE_URL` without recreating the Compose voice service. That worker must use
+the same `VOICE_SHARED_SECRET` and an `OVERTCHAT_VOICE_APP_URL` pointing to the
+E2E app. This allows speech testing alongside an active development voice
+worker. The CPU integration test covers text interruption during unfinished
+generation and completed-answer playback; the live-model test also interrupts
+a long spoken answer and verifies subsequent recall.
 
 Only these test containers expose speech ports, bound to loopback. The model
 cache stays in a test-only volume. `OVERTCHAT_VOICE_APP_URL` directs engine
