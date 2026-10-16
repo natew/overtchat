@@ -1066,3 +1066,38 @@ releases each job only after observing waiting, then verifies autonomous parent
 resumption and final idle. Cleanup releases the test job and closes its query.
 Set `CLAUDE_COMMAND` or `CLAUDE_BACKGROUND_MODEL` to override the executable or
 model; existing sessions and settings are not changed.
+
+## Claude rewind durability
+
+Claude conversation rewinds materialize a native transcript with the SDK's
+standalone fork operation before storing its new session ID. The connector
+transports the complete transcript through a host-backed SDK session store;
+SSH targets need Node and Claude Code, but no separate SDK installation.
+Transcripts above 64 MiB fail explicitly without switching session identity.
+Forked message UUIDs are reloaded before another rewind. File restoration still
+runs against the original session, because native forks do not copy file undo
+history.
+
+Rewinding the first message persists an empty-session sidecar marker. OvertChat starts
+that ID fresh until a native user or assistant message exists; it does not ask
+Claude to resume an empty conversation. The sidecar is retired when resumed native history contains messages.
+
+The regression uses synthetic native transcripts and an isolated Claude config;
+it sends no model prompts and does not touch existing conversations:
+
+```sh
+RUN_CLAUDE_REWIND_INTEGRATION=1 \
+CLAUDE_COMMAND=/absolute/path/to/claude \
+npm run test -w apps/connector -- src/claude-rewind.integration.test.ts
+
+RUN_CLAUDE_REWIND_INTEGRATION=1 \
+CLAUDE_REWIND_SSH_ALIAS=your-agent-host \
+CLAUDE_COMMAND=/remote/absolute/path/to/claude \
+npm run test -w apps/connector -- src/claude-rewind.integration.test.ts
+```
+
+It covers rewind, close without a follow-up prompt, reopen, another rewind using
+remapped UUIDs, and an empty reset across reopen and settings changes. Run the
+runtime and connector suites, typechecks, connector lint, and connector build
+alongside it. This prevents new broken rewind records; it does not migrate or
+repair sessions whose native transcript was already missing.
