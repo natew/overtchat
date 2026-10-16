@@ -33,9 +33,10 @@ import {
 } from "@overtchat/agent-runtime/claude/models";
 import { spawnClaudeOnHost } from "@overtchat/agent-runtime/claude/process";
 import {
-  readClaudeSessionMessages,
+  readClaudeSessionForResume,
   renameClaudeSession,
 } from "@overtchat/agent-runtime/claude/sessions";
+import { forkClaudeSession } from "@overtchat/agent-runtime/claude/rewind";
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -279,7 +280,6 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
     this.modeId = isClaudePermissionMode(launch.modeId ?? "")
       ? launch.modeId as PermissionMode
       : "auto";
-    this.startQuery(launch.resume?.providerSessionId);
     this.readyPromise = this.initialize();
     void this.readyPromise.catch(() => {});
   }
@@ -485,15 +485,18 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
           );
       }
       if (mode === "files") return;
-      const kept = this.messages.slice(0, index);
-      // Use the SDK's native resume/fork options so this also executes over SSH.
-      await this.restartQuery(
-        typeof resumeAt === "string"
-          ? { resume: this.sessionId, resumeAt }
-          : {},
+      // Materialize the native fork before changing the durable session identity.
+      // Query initialization alone does not persist a fork until another prompt.
+      const fork = await forkClaudeSession(
+        this.target, this.sessionId!,
+        this.launch.resume?.providerSessionPath ?? this.sessionId!,
+        this.launch.cwd, typeof resumeAt === "string" ? resumeAt : undefined,
       );
-      this.launch.resume = undefined;
-      this.messages = kept;
+      const saved = await readClaudeSessionForResume(this.target, fork.providerSessionPath);
+      await this.restartQuery({ ...fork, empty: saved.empty });
+      // The SDK remaps UUIDs while forking. Import those IDs so a second rewind
+      // targets the new native transcript rather than the old display IDs.
+      this.messages = saved.messages;
       this.assistantMessages.clear();
       this.toolNames.clear();
       this.currentStreamMessageId = undefined;
@@ -589,12 +592,20 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
     this.stopped = true;
     this.cancelInteractions(new Error("Claude session stopped."));
     this.input.close();
-    this.sdkQuery.close();
+    this.sdkQuery?.close();
     await this.consumePromise.catch(() => {});
     this.resetActivity();
   }
 
   private async initialize(): Promise<void> {
+    let resume = this.launch.resume?.providerSessionId;
+    if (this.launch.resume) {
+      const saved = await readClaudeSessionForResume(this.target, this.launch.resume.providerSessionPath);
+      this.messages = saved.messages;
+      if (saved.empty) resume = undefined;
+    }
+    if (this.stopped) throw new Error("Claude session stopped.");
+    this.startQuery(resume);
     const [initialized, settingsModels] = await Promise.all([
       this.sdkQuery.initializationResult(),
       readClaudeSettingsModels(this.target),
@@ -613,15 +624,9 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
     }
     this.selectedModel ??= this.models.find((model) => model.isDefault)?.id ?? this.models[0]?.id;
     this.thinkingOptionId ??= this.models.find((model) => model.id === this.selectedModel)?.defaultThinkingOptionId;
-    if (this.launch.resume?.providerSessionPath) {
-      this.messages = await readClaudeSessionMessages(
-        this.target,
-        this.launch.resume.providerSessionPath,
-      );
-    }
   }
 
-  private startQuery(resume?: string, resumeAt?: string): void {
+  private startQuery(resume?: string): void {
     const generation = ++this.consumeGeneration;
     this.resetActivity();
     this.input = new ClaudeInputQueue();
@@ -632,13 +637,6 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
         env: safeEnvironment(),
         pathToClaudeCodeExecutable: this.launch.executable,
         ...(resume ? { resume } : { sessionId: this.sessionId }),
-        ...(resumeAt
-          ? {
-              resumeSessionAt: resumeAt,
-              forkSession: true,
-              sessionId: this.sessionId,
-            }
-          : {}),
         enableFileCheckpointing: true,
         extraArgs: { "replay-user-messages": null },
         ...(this.selectedModel ? { model: this.selectedModel } : {}),
@@ -769,27 +767,54 @@ export class ClaudeRuntimeClient implements AgentRuntimeClient {
     });
   }
 
-  private async restartQuery(rewind?: { resume?: string; resumeAt?: string }): Promise<void> {
-    if (this.stopped) return;
+  private async restartQuery(fork?: {
+    providerSessionId: string;
+    providerSessionPath: string;
+    empty: boolean;
+  }): Promise<void> {
+    if (this.stopped) throw new Error("Claude session stopped.");
+    const previousId = this.sessionId;
+    const previousResume = this.launch.resume;
     this.restarting = true;
-    const oldInput = this.input;
-    const oldQuery = this.sdkQuery;
-    oldInput.close();
-    oldQuery.close();
+    this.input.close();
+    this.sdkQuery.close();
     await this.consumePromise.catch(() => {});
     this.restarting = false;
-    if (this.stopped) return;
-    if (rewind) this.sessionId = randomUUID();
-    this.startQuery(rewind ? rewind.resume : this.sessionId, rewind?.resumeAt);
-    const [initialized, settingsModels] = await Promise.all([
-      this.sdkQuery.initializationResult(),
-      readClaudeSettingsModels(this.target),
-    ]);
-    const models = initialized.models;
-    const commands = initialized.commands;
-    this.models = parseClaudeModels(models, settingsModels);
-    this.modes = claudeModesForModels(models);
-    this.commands = commandRows(commands);
+    if (this.stopped) throw new Error("Claude session stopped.");
+    if (fork) {
+      this.sessionId = fork.providerSessionId;
+      this.launch.resume = {
+        providerSessionId: fork.providerSessionId,
+        providerSessionPath: fork.providerSessionPath,
+      };
+    }
+    try {
+      this.startQuery((fork?.empty ?? this.messages.length === 0) ? undefined : this.sessionId);
+      const [initialized, settingsModels] = await Promise.all([
+        this.sdkQuery.initializationResult(),
+        readClaudeSettingsModels(this.target),
+      ]);
+      this.models = parseClaudeModels(initialized.models, settingsModels);
+      this.modes = claudeModesForModels(initialized.models);
+      this.commands = commandRows(initialized.commands);
+      if (this.stopped) throw new Error("Claude session stopped.");
+    } catch (error) {
+      if (fork) {
+        // A failed reopen must not leave the live identity ahead of the journal.
+        this.restarting = true;
+        this.input.close();
+        this.sdkQuery.close();
+        await this.consumePromise.catch(() => {});
+        this.sessionId = previousId;
+        this.launch.resume = previousResume;
+        this.restarting = false;
+        if (!this.stopped) {
+          this.startQuery(this.messages.length === 0 ? undefined : previousId);
+          await this.sdkQuery.initializationResult().catch(() => {});
+        }
+      }
+      throw error;
+    }
   }
 
   private async consume(query: Query, generation: number): Promise<void> {

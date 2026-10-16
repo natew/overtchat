@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: queryMock }));
+vi.mock("@anthropic-ai/claude-agent-sdk", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@anthropic-ai/claude-agent-sdk")>(), query: queryMock,
+}));
 
+import { rm, unlink } from "node:fs/promises";
+import { claudeRewindFixture } from "./rewind.test-helper";
+import { configureLocalTestProcessSpawner } from "../runtime/local-process.test-helper";
 import { ClaudeRuntimeClient } from "./client";
 import { claudeProviderAdapter } from "../providers/claude";
 import { AgentSessionRuntime } from "../runtime/registry";
@@ -14,6 +19,7 @@ class FakeQuery implements AsyncIterator<unknown> {
   readonly setModel = vi.fn(async () => {});
   readonly setPermissionMode = vi.fn(async () => {});
   readonly interrupt = vi.fn(async () => ({ still_queued: [] }));
+  readonly rewindFiles = vi.fn(async () => ({ canRewind: true }));
   private readonly values: unknown[] = [];
   private readonly waiters: Array<(value: IteratorResult<unknown>) => void> = [];
   private closed = false;
@@ -519,7 +525,7 @@ describe("Claude runtime client", () => {
     await client.stop();
   });
 
-  it("binds a prompt to the resumed query when a restart is already queued", async () => {
+  it("binds a first prompt to the fresh query when a restart is already queued", async () => {
     const queries: FakeQuery[] = [];
     queryMock.mockImplementation((params) => {
       const query = new FakeQuery(params);
@@ -538,7 +544,7 @@ describe("Claude runtime client", () => {
 
     expect(queries).toHaveLength(2);
     expect(queries[1]?.options).toMatchObject({
-      resume: expect.any(String),
+      sessionId: queries[0]!.options.sessionId,
       thinking: { type: "disabled" },
     });
     await expect(
@@ -806,4 +812,114 @@ describe("Claude runtime client", () => {
       await client.stop();
     }
   });
+});
+
+
+describe("Claude rewind persistence", () => {
+  it("reopens without another prompt, remaps checkpoints, and can rewind again", async () => {
+    configureLocalTestProcessSpawner();
+    const f = await claudeRewindFixture();
+    const queries: FakeQuery[] = [];
+    queryMock.mockImplementation((params) => {
+      const q = new FakeQuery(params); queries.push(q); return q;
+    });
+    const launch = { executable: "claude", cwd: f.cwd, modeId: "default", resume: {
+      providerSessionId: f.sessionId, providerSessionPath: f.sessionPath,
+    } };
+    let client = new ClaudeRuntimeClient({ transport: "local" }, launch);
+    try {
+      await client.rewind(f.ids[4]!, "conversation");
+      const state = await client.getState();
+      expect(queries.at(-1)!.options).toMatchObject({ resume: state.sessionId });
+      expect(queries.at(-1)!.options.forkSession).toBeUndefined();
+      await client.stop();
+      client = new ClaudeRuntimeClient({ transport: "local" }, { ...launch, resume: {
+        providerSessionId: state.sessionId as string, providerSessionPath: state.sessionFile as string,
+      } });
+      const messages = (await client.getMessages()).messages as Array<{ id: string }>;
+      expect(messages).toHaveLength(4);
+      await client.rewind(messages[2]!.id, "conversation");
+      expect((await client.getMessages()).messages).toHaveLength(2);
+      const first = (await client.getMessages()).messages[0] as { id: string };
+      await client.rewind(first.id, "conversation");
+      const empty = await client.getState();
+      await client.stop();
+      client = new ClaudeRuntimeClient({ transport: "local" }, { ...launch, resume: {
+        providerSessionId: empty.sessionId as string, providerSessionPath: empty.sessionFile as string,
+      } });
+      expect((await client.getMessages()).messages).toEqual([]);
+      expect(queries.at(-1)!.options).toMatchObject({ sessionId: empty.sessionId });
+      expect(queries.at(-1)!.options.resume).toBeUndefined();
+    } finally { await client.stop(); await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  it("retains the original session identity and messages when persistence fails", async () => {
+    configureLocalTestProcessSpawner();
+    const f = await claudeRewindFixture();
+    queryMock.mockImplementation((params) => new FakeQuery(params));
+    const client = new ClaudeRuntimeClient({ transport: "local" }, {
+      executable: "claude", cwd: f.cwd, modeId: "default", resume: {
+        providerSessionId: f.sessionId, providerSessionPath: f.sessionPath,
+      },
+    });
+    try {
+      await client.getState();
+      await unlink(f.sessionPath);
+      await expect(client.rewind(f.ids[4]!, "conversation")).rejects.toThrow();
+      expect((await client.getState()).sessionId).toBe(f.sessionId);
+      expect((await client.getMessages()).messages).toHaveLength(6);
+    } finally { await client.stop(); await rm(f.root, { recursive: true, force: true }); }
+  });
+});
+
+
+it("restores the old live identity if opening a persisted fork fails", async () => {
+  configureLocalTestProcessSpawner();
+  const f = await claudeRewindFixture();
+  let starts = 0;
+  queryMock.mockImplementation((params) => {
+    const query = new FakeQuery(params);
+    if (++starts === 2) vi.spyOn(query, "initializationResult").mockRejectedValue(new Error("startup failed"));
+    return query;
+  });
+  const client = new ClaudeRuntimeClient({ transport: "local" }, {
+    executable: "claude", cwd: f.cwd, modeId: "default", resume: {
+      providerSessionId: f.sessionId, providerSessionPath: f.sessionPath,
+    },
+  });
+  try {
+    await expect(client.rewind(f.ids[4]!, "conversation")).rejects.toThrow("startup failed");
+    expect(await client.getState()).toMatchObject({ sessionId: f.sessionId, sessionFile: f.sessionPath });
+    expect((await client.getMessages()).messages).toHaveLength(6);
+    await client.rewind(f.ids[4]!, "conversation");
+    expect((await client.getState()).sessionId).not.toBe(f.sessionId);
+    expect((await client.getMessages()).messages).toHaveLength(4);
+  } finally { await client.stop(); await rm(f.root, { recursive: true, force: true }); }
+});
+
+
+it.each(["files", "both"] as const)("restores files on the source session before a %s rewind", async (mode) => {
+  configureLocalTestProcessSpawner();
+  const f = await claudeRewindFixture();
+  const queries: FakeQuery[] = [];
+  queryMock.mockImplementation((params) => {
+    const query = new FakeQuery(params); queries.push(query); return query;
+  });
+  const client = new ClaudeRuntimeClient({ transport: "local" }, {
+    executable: "claude", cwd: f.cwd, modeId: "default", resume: {
+      providerSessionId: f.sessionId, providerSessionPath: f.sessionPath,
+    },
+  });
+  try {
+    await client.getState();
+    const source = queries[0]!;
+    source.rewindFiles.mockResolvedValueOnce({ canRewind: false });
+    await expect(client.rewind(f.ids[4]!, mode)).rejects.toThrow("No file checkpoint");
+    expect((await client.getState()).sessionId).toBe(f.sessionId);
+    expect(queries).toHaveLength(1);
+    await client.rewind(f.ids[4]!, mode);
+    expect(source.rewindFiles).toHaveBeenLastCalledWith(f.ids[4], { dryRun: false });
+    expect(queries).toHaveLength(mode === "files" ? 1 : 2);
+    expect((await client.getMessages()).messages).toHaveLength(mode === "files" ? 6 : 4);
+  } finally { await client.stop(); await rm(f.root, { recursive: true, force: true }); }
 });
