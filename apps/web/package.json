@@ -16,7 +16,7 @@
     "test:e2e:ui": "rm -f data/test.db* && playwright test --ui",
     "catalog:generate": "tsx scripts/generate-model-catalog.ts",
     "catalog:check": "tsx scripts/check-model-catalog.ts",
-    "auth:generate": "npx --yes auth@1.6.11 generate --config lib/auth/server.ts --output lib/db/schema.ts --y",
+    "auth:generate": "npx --yes auth@1.7.10 generate --config lib/auth/server.ts --output lib/db/schema.ts --y",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "mkdir -p data && drizzle-kit migrate",
     "db:studio": "drizzle-kit studio"
@@ -30,7 +30,7 @@
     "@ai-sdk/openai-compatible": "^3.0.12",
     "@ai-sdk/react": "^4.0.87",
     "@base-ui/react": "^1.4.1",
-    "@better-auth/expo": "1.6.23",
+    "@better-auth/expo": "1.7.10",
     "@dnd-kit/helpers": "^0.5.0",
     "@dnd-kit/react": "^0.5.0",
     "@openai/agents": "0.14.3",
@@ -46,7 +46,7 @@
     "@tanstack/react-virtual": "^3.14.10",
     "@yoloyash/web-basics": "0.5.0",
     "ai": "^7.0.84",
-    "better-auth": "1.6.23",
+    "better-auth": "1.7.10",
     "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clipboard-polyfill": "^4.1.1",
@@ -89,7 +89,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@vitest/ui": "^4.1.11",
+    "@vitest/ui": "4.1.11",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
@@ -97,6 +97,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.1",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "4.1.11"
   }
 }

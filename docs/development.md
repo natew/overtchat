@@ -64,6 +64,46 @@ The Validate workflow regenerates the lockfile with the pinned npm and fails if
 it changes. `npm ci` alone does not detect all dependency-flag drift. Run
 `npm ci`, `npm run deps:check`, and the affected workspace checks after regeneration.
 
+Keep Better Auth and its Expo package aligned across web and mobile, including
+the pinned `auth` CLI in the web workspace. Web/mobile Vitest and the web
+`@vitest/ui` package are pinned to the same patch: Better Auth's optional Vitest
+peer can otherwise make npm 10 resolve mismatched Vitest/UI peers and crash with
+`Cannot read properties of null (reading 'edgesOut')` when adding auth plugins.
+Update those test-package pins together and verify plugin installation in a
+disposable copy before changing this constraint. Do not use `--legacy-peer-deps`
+or `--force` for normal installs or CI.
+
+### Authentication upgrade validation
+
+Run the web/mobile checks and the desktop checks below. The compatibility
+fixture was generated with Better Auth 1.6.23 using synthetic credentials; its
+generator accepts a separate old web workspace so the old dependency is never
+installed in the current application. The test checks existing password hashes,
+signed cookies, desktop bearer tokens, restart, sign-in, and sign-out against
+the current auth configuration and migrated SQLite schema.
+
+```sh
+npm run test -w apps/web -- lib/auth/upgrade-compatibility.test.ts lib/auth/initial-setup.test.ts lib/auth/password-recovery.test.ts
+npm run typecheck -w apps/mobile
+npm run test -w apps/mobile
+E2E_PORT=4879 npm run test:e2e -w apps/web -- initial-setup.spec.ts users.spec.ts desktop-updates.spec.ts attachment-security.spec.ts
+```
+
+Compare generated auth table definitions with `lib/db/schema.ts` before adding
+a migration. The 1.6.23 to 1.7.10 upgrade leaves our four auth tables unchanged.
+The auth CLI currently cannot load transitive `server-only` imports; perform
+generation in a disposable checkout with those markers temporarily removed,
+then restore them. Never replace the complete application schema with only the
+generated auth fragment.
+
+On a real phone, verify login, force-quit/reopen, background/foreground, sign-out,
+and authenticated image previews/uploads. Better Auth 1.7 reads SecureStore
+asynchronously: imperative requests await `getAuthCookie()`, while rendered
+image sources and notification scopes use `useAuthCookie()` and wait for a
+resolved cookie. An old server/account's pending read must never populate the
+new identity. Test push registration with a build signed for push notifications;
+an isolated wildcard-profile build cannot establish APNs delivery.
+
 KaTeX is temporarily pinned to 0.18.2 in the web workspace and root npm
 override. The published Streamdown math, rehype-katex, Mermaid, and micromark
 math packages still declare 0.16 ranges, which retain the trust-restriction

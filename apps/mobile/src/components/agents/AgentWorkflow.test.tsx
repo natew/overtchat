@@ -328,6 +328,7 @@ vi.mock("@/lib/api", () => ({
   getApiBase: () => "https://chat.example",
   getAuthCookie: () => "cookie",
 }));
+vi.mock("@/lib/auth/useAuthCookie", () => ({ useAuthCookie: () => "cookie" }));
 vi.mock("expo-image", () => ({ Image: () => <img /> }));
 vi.mock("react-native-image-viewing", () => ({ default: () => null }));
 vi.mock("./AgentProviderIcon", () => ({
