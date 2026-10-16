@@ -34,9 +34,10 @@ export function GeneratedImageCard({
     let downloaded: File | undefined;
     try {
       const directory = await Directory.pickDirectoryAsync();
-      const cookie = getAuthCookie();
+      const baseURL = getApiBase();
+      const cookie = await getAuthCookie();
       downloaded = await File.downloadFileAsync(
-        `${getApiBase()}${image.url}`,
+        `${baseURL}${image.url}`,
         new File(Paths.cache, `${image.id}-${image.filename}`),
         {
           headers: cookie ? { Cookie: cookie } : undefined,

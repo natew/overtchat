@@ -1,4 +1,5 @@
 import { getAuthCookie } from "@/lib/api";
+import { useAuthCookie } from "@/lib/auth/useAuthCookie";
 import {
   changeNotificationPreferences,
   revokeNotifications,
@@ -44,10 +45,11 @@ export default function SettingsScreen() {
   const webSearchEnabled = useWebSearchEnabled();
   const [signingOut, setSigningOut] = useState(false);
   const serverUrl = getServerUrl();
+  const cookie = useAuthCookie();
   const notificationScope = {
     server: serverUrl ?? "",
     userId: session.data?.user.id ?? "",
-    cookie: getAuthCookie(),
+    cookie: cookie ?? "",
   };
   const { settings: notificationPrefs, error: notificationError } =
     useNotificationSettings(notificationScope);
@@ -55,7 +57,7 @@ export default function SettingsScreen() {
   async function setNotificationPreference(
     patch: Partial<NotificationPreferences>,
   ) {
-    if (savingNotifications) return;
+    if (savingNotifications || !cookie) return;
     setSavingNotifications(true);
     try {
       await changeNotificationPreferences(notificationScope, patch);
@@ -77,7 +79,9 @@ export default function SettingsScreen() {
     setSigningOut(true);
     try {
       // Revoking the auth session also revokes server-side push registration.
-      await revokeNotifications(notificationScope).catch(() => {});
+      await getAuthCookie()
+        .then((cookie) => revokeNotifications({ ...notificationScope, cookie }))
+        .catch(() => {});
       await getAuthClient().signOut();
       await session.refetch();
     } finally {
@@ -143,7 +147,7 @@ export default function SettingsScreen() {
                 })
               }
               accessibilityLabel="Response notifications"
-              disabled={savingNotifications}
+              disabled={savingNotifications || !cookie}
             />
             <Divider />
             <SwitchRow
@@ -154,7 +158,7 @@ export default function SettingsScreen() {
                 void setNotificationPreference({ previews })
               }
               accessibilityLabel="Notification previews"
-              disabled={savingNotifications}
+              disabled={savingNotifications || !cookie}
             />
             {notificationError ? (
               <GroupHeader
