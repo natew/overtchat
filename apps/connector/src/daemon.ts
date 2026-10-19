@@ -618,24 +618,20 @@ export class ConnectorDaemon {
               "Finish or stop the current turn and clear queued messages before reloading history.",
             );
           }
-          const capture = this.captures.get(request.session.sessionId)!;
-          const descriptor = {
-            ...request.session,
-            providerSessionId: capture.providerSessionId,
-            providerSessionPath: capture.providerSessionPath,
-          };
           attemptedProviderAction = true;
-          await this.finishCapture(descriptor.sessionId, false);
-          this.assertAccepting();
-          await this.awaitProviderAction(this.registry.stopSession(descriptor.sessionId));
-          this.assertAccepting();
-          runtime = await this.registry.getOrStart(sessionDescriptor(descriptor), {
-            hydrateHistory: true,
-          });
-          await this.assertRuntimeAccepted(descriptor.sessionId);
-          await this.attachTimeline(runtime, descriptor.providerSessionId, descriptor.providerSessionPath, true);
+          runtime = await this.restartRuntime(request.session, true);
         }
         attemptedProviderAction = true;
+        if (normalized.type === "abort") {
+          try {
+            await this.awaitProviderAction(runtime.command(normalized));
+          } catch (error) {
+            // A provider that cannot complete an abort would otherwise leave
+            // the turn running, so restart it on the same native session.
+            if (runtime.snapshot().status !== "running") throw error;
+            runtime = await this.restartRuntime(request.session, false);
+          }
+        }
         const data =
           normalized.type === "rewind" || normalized.type === "edit_message"
             ? {
@@ -644,7 +640,7 @@ export class ConnectorDaemon {
                 ),
               }
             : await this.awaitProviderAction(
-                normalized.type === "reload_history"
+                normalized.type === "reload_history" || normalized.type === "abort"
                   ? Promise.resolve()
                   : runtime.command(normalized, request.clientMessageId),
               ).then((commandResult) => ({
@@ -748,6 +744,34 @@ export class ConnectorDaemon {
     if (this.storesClosing) {
       throw new Error("The Host Connector stores are shutting down.");
     }
+  }
+
+  /** Replace a session's provider process, resuming its native session. */
+  private async restartRuntime(
+    session: AgentDaemonSessionDescriptor,
+    reloadHistory: boolean,
+  ): Promise<AgentSessionRuntime> {
+    const capture = this.captures.get(session.sessionId)!;
+    const descriptor = {
+      ...session,
+      providerSessionId: capture.providerSessionId,
+      providerSessionPath: capture.providerSessionPath,
+    };
+    await this.finishCapture(descriptor.sessionId, false);
+    this.assertAccepting();
+    await this.awaitProviderAction(this.registry.stopSession(descriptor.sessionId));
+    this.assertAccepting();
+    const runtime = await this.registry.getOrStart(sessionDescriptor(descriptor), {
+      hydrateHistory: reloadHistory,
+    });
+    await this.assertRuntimeAccepted(descriptor.sessionId);
+    await this.attachTimeline(
+      runtime,
+      descriptor.providerSessionId,
+      descriptor.providerSessionPath,
+      reloadHistory,
+    );
+    return runtime;
   }
 
   private async assertRuntimeAccepted(sessionId: string): Promise<void> {
