@@ -476,6 +476,16 @@ To validate both native bundles without publishing, run from `apps/mobile`:
 npx expo export --platform android --platform ios --output-dir /tmp/overtchat-mobile-export
 ```
 
+Native Android builds require a locally installed JDK 17 and the Android SDK.
+Set `JAVA_HOME` to JDK 17 before prebuilding/building (on macOS, use
+`export JAVA_HOME=$(/usr/libexec/java_home -v 17)`). Keep Expo's generated Gradle
+wrapper version. With the current React Native 0.85.3 toolchain, a missing JDK
+17 triggers a Foojay downloader that is incompatible with Gradle 9; downgrading
+an ignored wrapper file hides the missing prerequisite and is not a reproducible
+fix. The [mobile release workflow](../.github/workflows/mobile-eas.yml) installs
+JDK 17 explicitly; [release.md](release.md#mobile-release) owns production
+build validation.
+
 On Android and iOS, check session creation/resume, web/mobile switching,
 background and network recovery, model/permission controls, commands,
 approvals/questions, image input, tool output, keyboard clearance, and back
@@ -485,6 +495,79 @@ the remembered Agents section expansion, recent agent selection, workspace
 chat creation, and opening both chat types from push notifications. Check native
 Back alongside the conversation menu, edge-only drawer swipes on chat and agent
 list screens, and horizontal tool/code scrolling on agent detail screens.
+
+### Mobile realtime voice
+
+Mobile voice uses the existing voice session lease, realtime WebSocket, and
+canonical message event stream. `packages/voice-client` owns the shared realtime
+protocol; each app supplies audio and transport adapters. The local Expo module
+in `apps/mobile/modules/two-way-audio` captures and plays mono 24 kHz PCM16 with
+native voice processing. Its README records the upstream source and license.
+Rebuild the native app after changing this module; Expo Go and older native
+binaries cannot start live voice.
+
+Calls are foreground-only. Leaving the chat, locking the phone, switching apps,
+or losing audio focus ends the call and releases the microphone and playback.
+Returning never automatically opens the microphone. Ending keeps text submission
+gated until the server lease and generation settle, then reloads saved messages.
+Typed messages during a call use the same interruption and persistence path as
+spoken turns. Dictation and read-aloud remain separate features.
+
+Check microphone permission before requesting it: Android can launch its
+permission activity even when access is already granted. While an initial
+permission request is pending, its temporary background transition must not
+cancel that request. Capture still waits for the app to be active, and End or
+navigation away invalidates the pending start. Test both denial followed by
+grant and subsequent starts with permission already granted.
+
+```sh
+npm run test -w packages/voice-client
+npm run typecheck -w packages/voice-client
+npm run test -w apps/mobile
+npm run typecheck -w apps/mobile
+npm run test -w apps/web -- lib/voice components/chat/VoiceSession.test.tsx
+```
+
+Export both native bundles using the command above, then build and install a
+native client. On a physical device, connect to a server with configured voice,
+STT, TTS, and a reachable chat model. Validate a spoken turn and audible reply,
+barge-in, mute/unmute, typed interruption, End followed by normal text, repeated
+start/end, permission denial, network loss, navigation away, and background or
+lock followed by return. Check the persisted conversation for duplicate turns
+and the microphone indicator for cleanup. Test speaker and headset routes on
+both iOS and Android; JavaScript fixtures and bundle exports do not validate
+echo cancellation, Bluetooth routing, or native audio focus behavior.
+
+#### Mobile voice tradeoffs and qualification
+
+The mobile client reuses the existing PCM16-over-WebSocket voice protocol and
+canonical history stream. It does not add a WebRTC media stack. At 24 kHz mono,
+16-bit audio uses 48 KB/s per active direction before encoding; base64 adds
+roughly one third. Expect higher bandwidth than compressed voice codecs and
+qualify latency on cellular and lossy networks, not only local Wi-Fi.
+
+The local native module is an upstream adaptation that we maintain. iOS uses
+AVAudioEngine voice processing; Android echo cancellation depends on device
+support. Speaker, Bluetooth, phone interruptions, and returning to dictation or
+read-aloud require device checks. iOS keeps microphone capture active during the
+first reply rather than discarding the first two seconds of input. On the tested
+iPhone 13 Pro Max, three silent speaker trials (two at 50% volume, one at 90%)
+produced no self-transcribed turns, and speech within the first two seconds
+reached transcription. This is single-device evidence; check first-reply echo
+and early spoken interruption when qualifying another device or audio route.
+
+Metro selects the realtime SDK's browser exports. Startup synchronously installs
+missing DOM events using `event-target-shim` and `@whatwg-node/events`, and text
+encoding streams using `@stardazed/streams-text-encoding`. Runtime-provided
+globals are preserved; no React Native private imports are required. Recheck
+the polyfill integration tests, both native bundle exports, and on-device text
+streaming and voice after SDK or React Native upgrades.
+
+For the voice UI, verify the empty-draft voice/send swap, pending text preview,
+permission/connecting status, mute, interrupt versus End, model changes, and
+cleanup retry. Dismissing a turn warning must not dismiss a cleanup error or
+disable End after cleanup has failed. Include long pasted text, larger text
+sizes, reduced motion, and keyboard-open layouts in device review.
 
 ## Desktop validation
 
