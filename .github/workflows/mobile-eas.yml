@@ -193,7 +193,7 @@ jobs:
           retention-days: 14
 
   publish-android:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/mobile-v')
+    if: (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'tag')) && startsWith(github.ref, 'refs/tags/mobile-v')
     needs: [build-android, smoke-android]
     runs-on: [self-hosted, Linux, X64]
     permissions:

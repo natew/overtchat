@@ -36,6 +36,27 @@ Do not change unrelated manifest fields.
 4. Wait for artifact publication and the serialized promotion workflow.
 5. Verify `https://overtchat.com/install-manifest.json`.
 
+### Release dispatch fallback
+
+If GitHub does not dispatch the tag-push workflows (the tag exists but no run
+starts), run each release workflow manually against the tag. The workflow
+definition at the tag must include its dispatch trigger; if it does not, first
+merge the trigger change and re-create the tag on that commit.
+
+- App: `gh workflow run app-image.yml --ref vX.Y.Z`
+- Realtime voice: `gh workflow run voice-image.yml -f tag=voice-vX.Y.Z`
+- CLI: `gh workflow run cli-release.yml -f tag=cli-vX.Y.Z`
+- Connector: `gh workflow run connector-release.yml -f tag=connector-vX.Y.Z`
+- STT: `gh workflow run stt-images.yml -f tag=stt-vX.Y.Z`
+- Desktop: `gh workflow run desktop-release.yml --ref desktop-vX.Y.Z` (creates the
+  verified draft; complete the validation sections before publishing)
+- Mobile: `gh workflow run mobile-eas.yml --ref mobile-vX.Y.Z -f platform=android`
+  then `-f platform=ios-release` (Android submits to Play and attaches the APK;
+  iOS builds and uploads the IPA to App Store Connect)
+
+A manual dispatch against a release tag behaves like the tag push for draft
+creation and Play submission; dispatches against branches still only build.
+
 ## Component notes
 
 - **App:** The app workflow publishes the amd64/arm64 image, creates the GitHub
