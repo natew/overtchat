@@ -19,7 +19,7 @@ stable channel used by both `overtchat setup` and `overtchat update`.
 | --- | --- | --- |
 | App | Manifest `appVersion`; `compose.yml` default | `vX.Y.Z` |
 | Realtime voice | Manifest `voiceVersion`; `compose.yml` default | `voice-vX.Y.Z` |
-| CLI | `apps/cli/package.json`; lockfile; `CLI_VERSION`; site installer; manifest `cliVersion` | `cli-vX.Y.Z` |
+| CLI | `apps/cli/package.json`; lockfile; `CLI_VERSION`; both site installers (`install`, `install.ps1`); manifest `cliVersion` | `cli-vX.Y.Z` |
 | Connector | Package and lockfile; bridge release version; connector installer; site redirects; manifest `connectorVersion` | `connector-vX.Y.Z` |
 | STT | Manifest `sttVersion`; `compose.yml` default | `stt-vX.Y.Z` |
 | Bundled images | Manifest Redis, SearXNG, Kokoro, or OvertChat Cloud tunnel and proxy image digest | None |
@@ -42,12 +42,12 @@ Do not change unrelated manifest fields.
   release, and dispatches promotion.
 - **Realtime voice:** The voice workflow publishes the amd64/arm64 image and
   dispatches promotion.
-- **CLI:** The CLI workflow verifies Linux/macOS binaries, publishes the GitHub
+- **CLI:** The CLI workflow verifies Linux/macOS/Windows binaries, publishes the GitHub
   release, and dispatches promotion.
 - **Apple speech:** Ships inside the CLI. Run [Apple speech validation](development.md#apple-speech)
   after changing it. The first release requires both app and CLI version bumps
   and coordinated promotion so the app supports native routing/authentication.
-- **Connector:** The connector workflow verifies Linux/macOS binaries, publishes
+- **Connector:** The connector workflow verifies Linux/macOS/Windows binaries, publishes
   the GitHub release, and dispatches promotion. Increment the bridge protocol only
   for a breaking web-to-connector contract change; ordinary connector releases
   retain the current protocol. Protocol 6 adds byte-bounded batches, fragmented
@@ -90,7 +90,7 @@ and stable promotion waits until all selected artifacts are available.
 Host Connector packages contain the Node runtime pinned (with upstream archive
 SHA-256 hashes) in `apps/connector/scripts/node-runtime.json`, the bundled
 application, and the matching external `node-pty` native module. Update the
-runtime version and all four hashes together. Publish the four
+runtime version and all five hashes together. Publish the five
 `overtchat-connector-<platform>-<architecture>.tar.gz` files with
 `connector-checksums.txt` and the tagged installer.
 
@@ -102,14 +102,46 @@ new manager and promotion verifier. Do not promote the new connector alongside
 an old manager CLI.
 
 Workspace terminal releases also require `terminal-smoke --output-bytes 16777216`
-to pass using each packaged Node runtime on its native Linux/macOS,
-amd64/arm64 runner, with external Node installations excluded from PATH.
-The connector workflow runs this alongside the existing journal smoke tests.
+to pass using each packaged Node runtime on its native runner, with external
+Node installations excluded from PATH. The connector workflow runs this
+alongside the existing journal smoke tests on Linux, macOS, and Windows.
 Producing an archive alone does not establish working PTY support. Qualify the
 matching server and desktop UI with the
 [workspace terminal checks](development.md#workspace-terminal-validation).
 This feature adds an optional connector capability and terminal stream protocol;
 it does not change the existing agent protocol or bundled-client API level.
+
+## Windows backend qualification
+
+Windows x64 CLI and connector artifacts ship in the same `cli-v*` and
+`connector-v*` releases as Linux/macOS. Promotion requires the CLI `.exe`, the
+connector `.tar.gz`, their checksums, and the matching `install.ps1` version
+before it exposes Windows setup. Never add assets to an already published tag.
+
+Hosted CI runs the PowerShell installer, running-executable updater recovery,
+atomic configuration, the packaged terminal smoke, and NTFS journal
+migration/crash checks. Task Scheduler logon behavior needs a signed-in desktop
+user, which hosted runners lack. Before promoting a release that changes the CLI
+or connector, download the candidate artifacts and run these on a signed-in
+Windows 11 x64 PC, using Node 22 and the repository's npm dependencies:
+
+```powershell
+.github/scripts/smoke-cli-installer-windows.ps1 -Binary .\overtchat.exe -Installer apps/site/public/install.ps1
+.github/scripts/smoke-connector-service-windows.ps1 -Package .\overtchat-connector-windows-amd64.tar.gz
+node --import tsx .github/scripts/smoke-connector-rollback-windows.mjs .\overtchat-connector-windows-amd64.tar.gz
+```
+
+The service smoke covers install, crash restart, graceful stop, journal reopen,
+restart, and uninstall under a non-elevated interactive token. The rollback smoke
+injects staging and startup failures against a real task and NTFS files; its
+management readiness is a fixture. All three use isolated paths with spaces and
+remove their tasks and temporary files.
+
+Then update a disposable managed installation with the candidates and check:
+browser login from another LAN device, a native and an SSH agent request, a
+workspace terminal, retained credentials and history, Docker Desktop restart,
+and connector startup after reboot and sign-in. Record the artifact SHA-256
+values and the checks run in the release PR.
 
 ## Website downloads
 

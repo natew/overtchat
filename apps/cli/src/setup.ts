@@ -12,7 +12,7 @@ import {
   writeInstallationConfig,
   writeSecretsFile,
 } from "./config.js";
-import { completeAgentConnections, prepareAgentConnections, reportPendingAgentConnections } from "./connector-setup.js";
+import { assertAgentConnectionsComplete, completeAgentConnections, prepareAgentConnections, reportPendingAgentConnections } from "./connector-setup.js";
 import { installationSpinner as spinner } from "./install-progress.js";
 import { protectInstallationSecrets } from "./install-log.js";
 import {
@@ -320,9 +320,10 @@ export async function setup(
   options: SetupOptions,
   productionManifest?: ReleaseManifest,
 ): Promise<void> {
-  if (process.platform !== "linux" && process.platform !== "darwin") {
-    throw new Error("The managed OvertChat installer supports Linux and macOS.");
+  if (process.platform !== "linux" && process.platform !== "darwin" && process.platform !== "win32") {
+    throw new Error("The managed OvertChat installer supports Linux, macOS, and Windows.");
   }
+  if (process.platform === "win32" && process.arch !== "x64") throw new Error("Managed OvertChat for Windows requires x64.");
   const sourceDirectory = path.resolve(
     process.env.OVERTCHAT_SOURCE_DIR || process.env.INIT_CWD || process.cwd(),
   );
@@ -334,7 +335,7 @@ export async function setup(
   }
   let docker = await detectDockerCommand();
   if (!docker) {
-    if (process.platform === "darwin") await installDockerEngine();
+    if (process.platform === "darwin" || process.platform === "win32") await installDockerEngine();
     if (options.defaults) {
       throw new Error("Docker Engine was not found.");
     }
@@ -443,8 +444,9 @@ export async function setup(
     config.stt.provider === "bundled" &&
     (config.stt.accelerator === "auto" || config.stt.accelerator === "gpu");
   if (
+    !options.dryRun &&
     (ttsUsesGpu || sttUsesGpu) &&
-    !(await nvidiaContainerRuntimeAvailable(docker))
+    !(await nvidiaContainerRuntimeAvailable(docker, config.appImage))
   ) {
     if (options.defaults) {
       if (ttsUsesGpu) {
@@ -458,6 +460,8 @@ export async function setup(
       if (sttUsesGpu) {
         config.stt = { ...config.stt, accelerator: "cpu", gpuUuid: undefined };
       }
+    } else if (process.platform === "win32") {
+      throw new Error("Docker Desktop could not access the NVIDIA GPU. Update the Windows NVIDIA driver and WSL (wsl --update), enable Docker Desktop's WSL 2 engine, and retry. You can also rerun setup and select CPU speech.");
     } else {
       const installToolkit = await confirm({
         message:
@@ -668,6 +672,7 @@ export async function setup(
       note("Could not retrieve the setup link. Run overtchat status to retry, or find the setup code with overtchat logs.", "Account setup");
     }
     note("overtchat status\novertchat logs --follow\novertchat update --check", "Manage OvertChat");
+    assertAgentConnectionsComplete(config, !options.defaults && !!process.stdin.isTTY && !!process.stdout.isTTY);
   } catch (error) {
     if (speechChange) {
       try {

@@ -43,3 +43,16 @@ describe("SSH environment detection", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 });
+
+it("runs local Windows helpers with the connector's own Node runtime", async () => {
+  const platform = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+  try {
+    const run = vi.fn().mockResolvedValue(JSON.stringify({ platform: "win32", node: process.execPath, version: process.version }));
+    const environment = await new HostEnvironments(run).inspect({ transport: "local" });
+    expect(environment.nodeVersion).toBe(process.version);
+    const script = Buffer.from(run.mock.calls[0]![1].split(" ").at(-1)!, "base64").toString("utf16le");
+    expect(script).toContain(`$node = '${process.execPath.replaceAll("'", "''")}'`);
+  } finally {
+    platform.mockRestore();
+  }
+});

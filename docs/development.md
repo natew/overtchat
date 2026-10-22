@@ -250,7 +250,7 @@ The packaged qualification uses the same Node runtime shipped to users and
 requires peak RSS below 1 GiB.
 The connector workflow runs packaged migration/backup, native `SIGKILL`, bundled
 journal operations, and incident-scale checks on Linux/macOS for both CPU
-architectures. Development journal reset moves the entire connector directory,
+architectures and on Windows x64. Development journal reset moves the entire connector directory,
 including WAL and migration archives.
 Operator backup and upgrade recovery are documented in [Deploy](deploy.md).
 
@@ -1420,3 +1420,12 @@ remapped UUIDs, and an empty reset across reopen and settings changes. Run the
 runtime and connector suites, typechecks, connector lint, and connector build
 alongside it. This prevents new broken rewind records; it does not migrate or
 repair sessions whose native transcript was already missing.
+
+## Windows backend development
+
+Production Windows deployment is in [Deploy](deploy.md#windows). On Windows,
+`overtchat setup --development` requires Docker Desktop/WSL 2. With Agent
+Connections selected, it packages the worktree's connector with the pinned Node
+runtime, as on Linux and macOS. Use dedicated config/stack directories and a
+disposable Docker volume for deployment tests. Release-candidate checks are in
+[Windows backend qualification](release.md#windows-backend-qualification).

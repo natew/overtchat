@@ -46,10 +46,19 @@ export function sshSpawnArgs(
   return sshCommandArgs(alias, buildSshRemoteCommand(launch));
 }
 
+// Windows OpenSSH cannot multiplex connections. Ignore ControlMaster/ControlPath
+// settings copied from a macOS or Linux ~/.ssh/config instead of failing.
+function clientOptions(): string[] {
+  return process.platform === "win32"
+    ? ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
+    : [];
+}
+
 /** Control commands do not need the user's interactive agent environment. */
 export function sshCommandArgs(alias: string, command: string): string[] {
   if (!SAFE_ALIAS.test(alias)) throw new Error("Invalid SSH host alias.");
   return [
+    ...clientOptions(),
     "-T",
     "-o",
     "BatchMode=yes",
@@ -72,6 +81,7 @@ export function sshTerminalArgs(alias: string, cwd: string, platform: HostEnviro
     'exec "${SHELL:-/bin/sh}" -il',
   ].join(" && ");
   return [
+    ...clientOptions(),
     "-tt",
     "-o",
     "BatchMode=yes",
@@ -94,6 +104,7 @@ export function sshTunnelArgs(
     }
   }
   return [
+    ...clientOptions(),
     "-N",
     "-T",
     "-o",

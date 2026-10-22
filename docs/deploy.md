@@ -1,7 +1,7 @@
 # Deploy
 
-Supports x86-64/arm64 Linux and Intel/Apple Silicon Macs. The guided manager
-installs and updates OvertChat with Docker Compose.
+Supports x86-64/arm64 Linux, Intel/Apple Silicon Macs, and x64 Windows 11 PCs.
+The guided manager installs and updates OvertChat with Docker Compose.
 
 ## Install
 
@@ -10,6 +10,8 @@ For a guided overview, start with [Set up a server](https://overtchat.com/setup/
 ```sh
 curl -fsSL https://overtchat.com/install | sh
 ```
+
+On Windows, use the PowerShell command in [Windows](#windows) instead.
 
 Choose where to access OvertChat, local search, speech, and voice services,
 and whether to check for updates. The wizard generates the configuration and
@@ -33,11 +35,25 @@ overtchat logs -f   # follow container logs
 overtchat reset-password # recover an account password
 ```
 
+Only one setup or update runs at a time; if another is running, wait and retry.
+Updates keep the existing connector pairing. If replacing the CLI or connector
+fails or is interrupted, rerun the same command as the same user with the same
+directory overrides. It restores the previous executable, or finishes the
+replacement, before continuing. Keep `.previous` and `.update.json` files beside
+the executables until then. On Windows, if `overtchat` is missing after an
+interrupted update, rerun the PowerShell installer. Recovery covers executables,
+not database migrations.
+
+Without a terminal, or with `setup --defaults`, setup and update exit with an
+error if selected Agent Connections could not be set up. The app itself is still
+running; check `overtchat logs install` and rerun. Interactive setup lets you
+finish without them.
+
 Voice requires both STT and TTS. Bundled Parakeet and Kokoro support native
 Apple acceleration on Apple Silicon with macOS 14 or later, and CPU or NVIDIA
-GPU containers on Linux. CPU containers remain available on Macs, including
-Intel Macs. Setup can install NVIDIA Container
-Toolkit on supported systems. Kokoro needs roughly 3–4 GB VRAM, so choose CPU
+GPU containers on Linux and on Windows with Docker Desktop/WSL 2. CPU containers
+remain available on Macs, including Intel Macs. Setup can install NVIDIA Container
+Toolkit on supported Linux systems. Kokoro needs roughly 3–4 GB VRAM, so choose CPU
 if GPU memory is limited.
 
 ### macOS
@@ -64,6 +80,70 @@ connects to the authenticated loopback service on port 5093.
 `speech.log` live in the managed stack's `apple-speech/` directory and are not
 automatically pruned. Setup restores speech routing and the previous native
 service on failure; it does not downgrade the app or database.
+
+### Windows
+
+Windows needs an x64 PC with Windows 11 and
+[Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+using the WSL 2 backend and Linux containers. Start Docker Desktop once to finish
+its first-run setup, and enable **Start Docker Desktop when you sign in**. For
+Agent Connections, also install your provider CLIs and sign in to them as your
+desktop user. The connector bundles its own Node.js runtime.
+
+In 64-bit PowerShell, as your normal desktop user (not administrator), run:
+
+```powershell
+irm https://overtchat.com/install.ps1 | iex
+```
+
+The installer verifies the release checksum, installs `overtchat.exe` in
+`%LOCALAPPDATA%\Programs\OvertChat\bin`, adds it to your user PATH (reopen other
+terminals to use it), then starts setup. Run setup and updates from the desktop
+session rather than over SSH: Docker Desktop's credential helper can fail image
+pulls from an SSH logon with "A specified logon session does not exist".
+
+The Windows binaries are not code-signed yet. Smart App Control or organization
+policies may block them; do not disable those protections to install OvertChat.
+
+| Data | Location |
+| --- | --- |
+| Configuration, secrets, install log | `%LOCALAPPDATA%\OvertChat\config`, accessible only to your user and SYSTEM |
+| Compose files | `%LOCALAPPDATA%\OvertChat\stack` |
+| Connector runtimes | `%LOCALAPPDATA%\Programs\OvertChat\connector`, launched by `bin\overtchat-connector.cmd` |
+| Database | The managed Docker volume |
+
+Resetting or uninstalling Docker Desktop or WSL can delete the volume; back up the
+volume and the configuration directory first. Custom `OVERTCHAT_CONFIG_DIR` and
+`OVERTCHAT_STACK_DIR` values must be dedicated directories, because the manager
+replaces the configuration directory's permissions.
+
+The Host Connector runs as a Task Scheduler task for your signed-in user, without
+administrator rights or a stored password, and restarts if it exits with an
+error. It uses your Windows provider credentials and `%USERPROFILE%\.ssh\config`,
+so native and SSH agents both work. OvertChat is only available while the PC is
+awake and you are signed in; it is not a Windows system service.
+
+```powershell
+overtchat status
+overtchat update
+overtchat logs connector --tail 100
+overtchat logs install --tail 100
+```
+
+Connector logs rotate in the configuration directory's `windows-service` folder.
+`overtchat-connector service-stop` stops and disables the task, `service-install`
+enables and starts it again, and `service-uninstall` removes only the task,
+keeping credentials and session history. Custom installations must set the same
+`OVERTCHAT_CONNECTOR_CONFIG` for these commands.
+
+NVIDIA speech acceleration uses Docker Desktop's WSL GPU support. Install a
+current NVIDIA Windows driver, not Linux drivers or the NVIDIA Container Toolkit.
+Setup checks GPU access inside a container before selecting CUDA; CPU speech
+works without a GPU.
+
+LAN access is subject to Windows Firewall; allow the app port only on private
+networks you intend to serve. Windows ARM64, Windows Server, and service-account
+deployments are not supported.
 
 ## Password recovery
 
@@ -370,8 +450,9 @@ Workspace paths may use drive-qualified paths such as `C:\Users\me\project`
 or UNC paths such as `\\server\share\project`. Network shares still require
 access from the SSH account. WSL reached through its own Linux SSH endpoint
 remains a separate POSIX environment with Linux paths and provider installations.
-Windows SSH support does not add a Windows connector service installer; managed
-connector installation remains Linux/macOS.
+A Windows server's own connector is installed by `overtchat setup`. Pairing a
+standalone connector to another server supports Linux and macOS only; reach
+other Windows PCs as SSH hosts.
 
 ### Coding-agent providers and connector operation
 
@@ -462,8 +543,9 @@ the Host Connector. Local shells run on the connector machine; SSH workspaces us
 the connector's existing OpenSSH alias. The connector detects the target OS:
 POSIX targets use their login shell, while Windows targets open an interactive
 Windows PowerShell in the workspace directory. Windows requires an OpenSSH
-server with ConPTY support (Windows 10 / Server 2019 or newer). The connector
-itself still runs on Linux or macOS; the desktop client can run on Windows.
+server with ConPTY support (Windows 10 / Server 2019 or newer). Local shells on a
+Windows connector use PowerShell 7 (`pwsh`) when it is on PATH, otherwise
+Windows PowerShell.
 The native mobile terminal UI is not supported.
 Some Windows OpenSSH versions report exit code 0 for interactive sessions even
 when the shell fails; consult the terminal's error output in that case.
@@ -511,13 +593,17 @@ Set `OVERTCHAT_DISABLE_AGENT_TERMINAL=1` in the connector service environment an
 restart it to disable terminal support.
 
 Host Connector release archives include Node.js and the native PTY module.
-No separate Node installation is needed on the connector host. The installer
-stores each runtime under `~/.local/lib/overtchat/connector/` and keeps the
-service command at `~/.local/bin/overtchat-connector`. Upgrades replace that
-launcher atomically. The standalone upgrade installer restores the previous
-launcher or legacy executable and the journal backup on failure. Previous runtime directories are retained
-so an older launcher remains usable. Do not remove a directory referenced by
-the current launcher or an upgrade rollback file.
+No separate Node installation is needed on the connector host. Each runtime is
+stored under `~/.local/lib/overtchat/connector/` (on Windows,
+`%LOCALAPPDATA%\Programs\OvertChat\connector`), and the service command stays at
+`~/.local/bin/overtchat-connector`. Upgrades replace that launcher atomically.
+`overtchat setup` and `overtchat update` then remove runtimes that neither the
+launcher nor a pending rollback references; on Windows, a runtime still in use
+is removed by a later update. The standalone upgrade installer restores the
+previous launcher or legacy executable and the journal backup on failure, and
+retains previous runtime directories so an older launcher remains usable. Do
+not remove a directory referenced by the current launcher or an upgrade rollback
+file.
 
 ## Share with your family
 

@@ -20,14 +20,18 @@ const { values } = parseArgs({ options: {
 } });
 const target = values.target;
 assert(Object.hasOwn(runtime.sha256, target), `Unsupported connector target: ${target}`);
-const assetTarget = target.replace(/-x64$/, "-amd64");
+const windows = target.startsWith("win32-");
+const assetTarget = target.replace(/^win32-/, "windows-").replace(/-x64$/, "-amd64");
+// Windows ships bsdtar. A Git Bash GNU tar earlier in PATH reads "C:" as a host.
+const tar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 const output = path.resolve(values.output);
 const staging = await mkdtemp(path.join(os.tmpdir(), "overtchat-connector-package-"));
 const root = path.join(staging, "overtchat-connector");
 
 try {
   await mkdir(path.join(root, "bin"), { recursive: true });
-  const nodeArchive = `node-v${runtime.version}-${target}.tar.gz`;
+  const nodeName = `node-v${runtime.version}-${windows ? target.replace(/^win32-/, "win-") : target}`;
+  const nodeArchive = `${nodeName}${windows ? ".zip" : ".tar.gz"}`;
   const cache = path.join(workspace, "dist", "node-runtime-cache");
   await mkdir(cache, { recursive: true });
   let bytes = await readFile(path.join(cache, nodeArchive)).catch((error) => {
@@ -45,11 +49,14 @@ try {
   }
   assert.equal(createHash("sha256").update(bytes).digest("hex"), runtime.sha256[target], "Node runtime checksum mismatch");
   await writeFile(path.join(staging, nodeArchive), bytes);
-  execFileSync("tar", ["-xzf", path.join(staging, nodeArchive), "-C", staging]);
-  const nodeRoot = path.join(staging, `node-v${runtime.version}-${target}`);
-  await copyFile(path.join(nodeRoot, "bin", "node"), path.join(root, "bin", "node"));
+  // GNU tar cannot read Node's Windows zip; bsdtar on macOS and Windows can.
+  if (windows && process.platform === "linux") execFileSync("unzip", ["-q", path.join(staging, nodeArchive), "-d", staging]);
+  else execFileSync(tar, ["-xf", path.join(staging, nodeArchive), "-C", staging]);
+  const nodeRoot = path.join(staging, nodeName);
+  const node = windows ? "node.exe" : "node";
+  await copyFile(path.join(nodeRoot, windows ? "" : "bin", node), path.join(root, "bin", node));
   await copyFile(path.join(nodeRoot, "LICENSE"), path.join(root, "NODE-LICENSE"));
-  await chmod(path.join(root, "bin", "node"), 0o755);
+  await chmod(path.join(root, "bin", node), 0o755);
 
   await build({
     absWorkingDir: workspace,
@@ -68,7 +75,10 @@ try {
     recursive: true,
     filter: (source) => !source.endsWith(".map") && !source.endsWith(".test.js"),
   });
-  await cp(path.join(ptyRoot, "prebuilds", target), path.join(ptyDestination, "prebuilds", target), { recursive: true });
+  await cp(path.join(ptyRoot, "prebuilds", target), path.join(ptyDestination, "prebuilds", target), {
+    recursive: true,
+    filter: (source) => !source.endsWith(".pdb"),
+  });
   if (target.startsWith("darwin-")) {
     await chmod(path.join(ptyDestination, "prebuilds", target, "spawn-helper"), 0o755);
   }
@@ -82,14 +92,21 @@ try {
     name: metadata.name, version: metadata.version, private: true,
     overtchatConnector: { format: 1, node: runtime.version, target, pty: metadata.dependencies["node-pty"] },
   }, null, 2) + "\n");
-  await writeFile(path.join(root, "overtchat-connector"), `#!/bin/sh
+  if (windows) {
+    await writeFile(path.join(root, "overtchat-connector.cmd"), '@"%~dp0bin\\node.exe" "%~dp0app\\connector.mjs" %*\r\n');
+  } else {
+    await writeFile(path.join(root, "overtchat-connector"), `#!/bin/sh
 set -eu
 connector_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 exec "$connector_root/bin/node" "$connector_root/app/connector.mjs" "$@"
 `, { mode: 0o755 });
+  }
   await mkdir(output, { recursive: true });
   const archive = path.join(output, `overtchat-connector-${assetTarget}.tar.gz`);
-  execFileSync("tar", ["-czf", archive, "-C", staging, "overtchat-connector"]);
+  // macOS tar otherwise adds AppleDouble ._ members, which installers reject.
+  execFileSync(tar, ["-czf", archive, "-C", staging, "overtchat-connector"], {
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
   const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
   await writeFile(`${archive}.sha256`, `${digest}  ${path.basename(archive)}\n`);
   console.log(`Packaged ${path.basename(archive)} with Node ${runtime.version} and node-pty ${metadata.dependencies["node-pty"]}`);
