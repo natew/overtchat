@@ -1,9 +1,10 @@
 "use client";
 
 import { ErrorNotice } from "@/components/ui/error-notice";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ChatStatus, FileUIPart, UIMessage } from "ai";
+import { collectOpenUIStates, type OpenUIAction } from "@overtchat/shared";
 import {
   ChevronDown,
   LoaderCircle,
@@ -46,6 +47,7 @@ export function MessageList({
   onRegenerate,
   onContinue,
   onImageReference,
+  onOpenUIAction,
   onEdit,
   onReconnect,
 }: {
@@ -65,9 +67,11 @@ export function MessageList({
   onRegenerate: (id: string) => void;
   onContinue?: (id: string) => void;
   onImageReference?: (file: FileUIPart) => void;
+  onOpenUIAction?: (action: OpenUIAction) => void;
   onEdit: (id: string, text: string, files: FileUIPart[]) => void;
   onReconnect: () => void;
 }) {
+  const openuiStates = useMemo(() => collectOpenUIStates(messages), [messages]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const initialScrollCompleteRef = useRef(false);
   const latestMessageIdRef = useRef(messages.at(-1)?.id);
@@ -203,6 +207,8 @@ export function MessageList({
                       onRegenerate={onRegenerate}
                       onContinue={isLast && canContinueMessage(message) ? onContinue : undefined}
                       onImageReference={onImageReference}
+                      onOpenUIAction={onOpenUIAction}
+                      openuiStates={openuiStates}
                       onEdit={onEdit}
                       speech={speech}
                       showStats={showStats}

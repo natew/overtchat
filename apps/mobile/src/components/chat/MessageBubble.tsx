@@ -1,3 +1,4 @@
+import { openUIStateKey, type OpenUIAction, type OpenUIFormState } from "@overtchat/shared";
 import type { FileUIPart, UIMessage } from "ai";
 import { groupMessageParts, isToolSettled } from "@overtchat/shared";
 import * as Clipboard from "expo-clipboard";
@@ -15,6 +16,7 @@ import { EditBubble } from "./EditBubble";
 import { MarkdownBody } from "./MarkdownBody";
 import { GeneratedImageCard } from "./GeneratedImageCard";
 import { MemoryArtifact } from "./MemoryArtifact";
+import { OpenUICard } from "./OpenUICard";
 import { MessageActions } from "./MessageActions";
 import { type MessageAction, MessageMenu } from "./MessageMenu";
 import { Sources } from "./Sources";
@@ -30,6 +32,9 @@ export function MessageBubble({
   onRegenerate,
   onContinue,
   onImageReference,
+  onOpenUIAction,
+  openuiStates,
+  liveOpenUI,
   readOnly = false,
 }: {
   message: UIMessage;
@@ -42,6 +47,9 @@ export function MessageBubble({
   onRegenerate: (id: string) => void;
   onContinue?: (id: string) => void;
   onImageReference?: (file: FileUIPart) => void;
+  onOpenUIAction?: (action: OpenUIAction) => void;
+  openuiStates?: Map<string, OpenUIFormState>;
+  liveOpenUI?: ReadonlySet<string>;
   readOnly?: boolean;
 }) {
   const { colors, radii, fonts } = useTheme();
@@ -150,7 +158,7 @@ export function MessageBubble({
     );
   }
 
-  const hasAnyText = message.parts.some((p) => p.type === "text");
+  const hasAnyText = text.trim().length > 0;
   const showActions = !streaming && hasAnyText;
   const assistantActions: MessageAction[] =
     !streaming && hasAnyText
@@ -195,6 +203,22 @@ export function MessageBubble({
                 part={seg.part}
                 streaming={streaming}
                 onReference={readOnly ? undefined : onImageReference}
+              />
+            );
+          }
+          if (seg.kind === "openui") {
+            return (
+              <OpenUICard
+                messageId={message.id}
+                initialState={openuiStates?.get(openUIStateKey(message.id, seg.part.toolCallId))}
+                onAction={readOnly ? undefined : onOpenUIAction}
+                key={seg.part.toolCallId}
+                part={seg.part}
+                streaming={streaming}
+                deferred={
+                  liveOpenUI !== undefined &&
+                  !liveOpenUI.has(openUIStateKey(message.id, seg.part.toolCallId))
+                }
               />
             );
           }

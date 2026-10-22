@@ -37,6 +37,7 @@ import {
 } from "@/lib/providers/server/output-budget";
 import {
   isImageToolPart,
+  OPENUI_PRESENT_TOOL_NAME,
   isGeneratedImage,
   modelSupportsChatReasoningLevel,
 } from "@overtchat/shared";
@@ -51,6 +52,17 @@ import {
   IMAGE_TOOL_PROMPT,
   withImageReferences,
 } from "@/lib/images/tools";
+import {
+  createOpenUITools,
+  hasSuccessfulOpenUI,
+  OPENUI_TOOL_ORDER,
+  OPENUI_TOOL_PROMPT,
+} from "@/lib/openui/tools";
+import {
+  withOpenUIActionContext,
+  withRecentOpenUIPrograms,
+  withSubmittedOpenUIAction,
+} from "@/lib/openui/actions";
 import { currentDateSystemPrompt } from "@/lib/chat/current-date";
 import {
   assertChatAttachments,
@@ -146,6 +158,8 @@ export async function runChat(
     modelConfigId,
     webSearchEnabled,
     forceSearch,
+    openuiEnabled = false,
+    forceOpenUI = false,
     imageGeneration,
     timeZone,
     chatId,
@@ -242,6 +256,7 @@ export async function runChat(
   }
 
   if (persistUserMessage) {
+    messages = withSubmittedOpenUIAction(messages, parsedRequest.openuiAction);
     messages = messages.map((message, index) => index === messages.length - 1
       ? withTurnResponseStyle(message, parsedRequest.responseStyle ?? "text")
       : message);
@@ -343,18 +358,37 @@ export async function runChat(
     );
   }
   let contextCheckpoint = restoredContext.checkpoint;
+  const openuiEligible =
+    parsedRequest.openuiSupported === true &&
+    modelConfig.toolCallingEnabled !== false &&
+    (openuiEnabled || forceOpenUI) &&
+    parsedRequest.responseStyle !== "voice";
+  const openuiPromptFits = !openuiEligible || !contextBudget || (
+    countTextTokens(OPENUI_TOOL_PROMPT) +
+    countTextTokens(modelConfig.systemPrompt ?? "") +
+    countTextTokens(JSON.stringify(restoredContext.messages.at(-1)?.parts ?? [])) +
+    2048 < contextBudget.inputTokens
+  );
+  if (forceOpenUI && openuiEligible && !openuiPromptFits) {
+    throw new ChatRequestError(
+      "Interactive UI instructions and this message exceed the model's available context. Choose a larger-context model or shorten the message.",
+    );
+  }
+  const openuiToolsEnabled = openuiEligible && openuiPromptFits;
+  // History decoding is independent of whether this turn offers the tool.
+  const openuiTools = createOpenUITools();
   const inlined = await inlineUploads(
     imageToolsEnabled
       ? withImageReferences(restoredContext.messages, supportsImageInput)
       : restoredContext.messages,
     userId,
   );
-  const convertedMessages = await convertToModelMessages(withResponseStyle(inlined).map((message) =>
+  const convertedMessages = await convertToModelMessages(withOpenUIActionContext(withRecentOpenUIPrograms(withResponseStyle(inlined))).map((message) =>
     message.role === "assistant"
       ? { ...message, parts: joinContinuationTextParts(message.parts) }
       : message,
   ), {
-    tools: { ...chatTools, ...imageTools },
+    tools: { ...chatTools, ...imageTools, ...openuiTools },
     // An intentional stop can persist a tool call before its result arrives.
     // Keep partial text/reasoning, but do not replay an unmatched call.
     ignoreIncompleteToolCalls: true,
@@ -399,6 +433,10 @@ export async function runChat(
     imageToolsEnabled ? IMAGE_TOOL_PROMPT : null,
     imageGeneration
       ? "The user selected Create image for this turn. Treat their message as an image generation or editing request. Research with available tools or ask a clarifying question first when needed, then use the image tools when ready."
+      : null,
+    openuiToolsEnabled ? OPENUI_TOOL_PROMPT : null,
+    forceOpenUI && openuiToolsEnabled
+      ? `The user selected Interactive UI for this turn. Present your answer as an interactive OpenUI interface by calling ${OPENUI_PRESENT_TOOL_NAME}. You may use other available tools first when needed, then call ${OPENUI_PRESENT_TOOL_NAME} for your final response.`
       : null,
     currentDateSystemPrompt(timeZone),
   ].filter((value): value is string => Boolean(value && value.trim()));
@@ -514,6 +552,7 @@ export async function runChat(
     const toolSources: ToolSet[] = [
       ...(webToolsEnabled ? [chatTools] : []),
       ...(imageToolsEnabled ? [imageTools] : []),
+      ...(openuiToolsEnabled ? [openuiTools] : []),
       ...(memoryToolsEnabled ? [memoryTools] : []),
       ...(hasMcpTools ? [mcpTools] : []),
     ];
@@ -526,10 +565,12 @@ export async function runChat(
     const toolOrder = [
       ...(webToolsEnabled ? CHAT_TOOL_ORDER : []),
       ...(memoryToolsEnabled ? MEMORY_TOOL_ORDER : []),
+      ...(openuiToolsEnabled ? OPENUI_TOOL_ORDER : []),
       ...agentToolNames.filter(
         (name) =>
           !(CHAT_TOOL_ORDER as readonly string[]).includes(name) &&
-          !(MEMORY_TOOL_ORDER as readonly string[]).includes(name),
+          !(MEMORY_TOOL_ORDER as readonly string[]).includes(name) &&
+          !(OPENUI_TOOL_ORDER as readonly string[]).includes(name),
       ),
     ];
     const includeProviderActivity = modelConfig.providerId === "llamacpp";
@@ -618,6 +659,13 @@ export async function runChat(
         ...(forceSearch && webToolsEnabled && stepNumber === 0
           ? { activeTools: WEB_TOOL_NAMES, toolChoice: "required" as const }
           : {}),
+        ...(openuiToolsEnabled && steps.flatMap((step) => step.toolCalls)
+          .filter((call) => call.toolName === OPENUI_PRESENT_TOOL_NAME).length >= 2
+          ? {
+              activeTools: agentToolNames.filter((name) => name !== OPENUI_PRESENT_TOOL_NAME),
+              instructions: `${system ?? ""}\nInteractive rendering failed twice. Do not call present_openui again. Give the user the complete answer in readable Markdown instead.`,
+            }
+          : {}),
       };
     };
     const result = manualCompaction
@@ -663,7 +711,9 @@ export async function runChat(
             instructions,
             tools: agentTools,
             toolOrder,
-            stopWhen: isStepCount(50),
+            stopWhen: openuiToolsEnabled
+              ? [isStepCount(50), hasSuccessfulOpenUI]
+              : isStepCount(50),
             toolChoice: "auto",
             prepareStep,
             providerOptions: requestProviderOptions,

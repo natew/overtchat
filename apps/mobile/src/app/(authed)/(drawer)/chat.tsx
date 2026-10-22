@@ -4,6 +4,7 @@ import {
   hasSuccessfulMemoryMutation,
   modelSupportsChatReasoningLevel,
   modelSupportsToolCalling,
+  type OpenUIAction,
   type ChatReasoningLevel,
   type ChatRequestAction,
 } from "@overtchat/shared";
@@ -67,7 +68,7 @@ import {
   setReasoningLevel,
   useReasoningLevels,
 } from "@/lib/reasoningPreferences";
-import { useWebSearchEnabled } from "@/lib/toolPreferences";
+import { useOpenUIEnabled, useWebSearchEnabled } from "@/lib/toolPreferences";
 import { useSpeech } from "@/lib/useSpeech";
 import { useTheme } from "@/lib/theme";
 import { toastError } from "@/lib/toast";
@@ -202,11 +203,13 @@ function ChatSurface({
 
   const [selectedId, setSelectedId] = useSelectedModel(models, initialModelId);
   const [searchRequested, setSearchRequested] = useState(false);
+  const [openuiRequested, setOpenuiRequested] = useState(false);
   const [imageOptions, setImageOptions] = useState<ImageGenerationOptions>();
   const { data: capabilitiesData } = useCapabilities();
   const imageCapability = capabilitiesData?.capabilities.images;
   const [chatPersisted, setChatPersisted] = useState(!isNew);
   const webSearchEnabled = useWebSearchEnabled();
+  const openuiEnabled = useOpenUIEnabled();
   const reasoningLevels = useReasoningLevels();
   const pickerRef = useRef<ModelPickerSheetRef>(null);
   const addSheetRef = useRef<BottomSheetModal>(null);
@@ -363,6 +366,8 @@ function ChatSurface({
   const searchUnavailableReason = !webSearchEnabled
     ? "Web search is disabled in Settings → Tools"
     : "Unavailable for this model";
+  const openuiAvailable = modelSupportsToolCalling(selectedModel);
+  const openuiUnavailableReason = "Unavailable for this model";
   const voiceCapability = capabilitiesData?.capabilities.voice;
   const voiceInstalled = Boolean(voiceCapability?.installed);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -370,6 +375,7 @@ function ChatSurface({
     !editingId &&
       !imageOptions &&
       !searchRequested &&
+      !openuiRequested &&
       chatQueue.messages.length === 0,
   );
   const voiceAvailable = Boolean(
@@ -486,12 +492,21 @@ function ChatSurface({
     });
   }, [navigation, colors, onNewChat]);
 
-  function requestBody(action: ChatRequestAction, forceSearch = false, imageRequest?: ImageGenerationOptions) {
+  function requestBody(
+    action: ChatRequestAction,
+    forceSearch = false,
+    imageRequest?: ImageGenerationOptions,
+    forceOpenUI = false,
+  ) {
     const requested = searchAvailable && forceSearch;
+    const requestedOpenUI = openuiAvailable && forceOpenUI;
     return {
       modelConfigId: selectedId,
       webSearchEnabled,
       forceSearch: requested,
+      openuiSupported: true,
+      openuiEnabled,
+      forceOpenUI: requestedOpenUI,
       ...(imageAvailable && imageRequest ? { imageGeneration: imageRequest } : {}),
       // Older self-hosted servers only understand the persisted-toggle name.
       // New servers give `forceSearch` precedence and discard this alias.
@@ -530,10 +545,10 @@ function ChatSurface({
       setMessages(res.data.messages);
   }
 
-  function handleSubmit(text: string, files: FileUIPart[]) {
+  function handleSubmit(text: string, files: FileUIPart[], openuiAction?: OpenUIAction) {
     if (voice.busy) return files.length ? false : voice.sendMessage(text);
     Keyboard.dismiss();
-    if (text.trim().toLowerCase() === "/compact" && files.length === 0) {
+    if (!openuiAction && text.trim().toLowerCase() === "/compact" && files.length === 0) {
       if (voice.busy || streaming || !configured || messages.length === 0) return;
       setContextStatus(null);
       setLocalAnchorRequestKey((key) => key + 1);
@@ -562,11 +577,22 @@ function ChatSurface({
       id: Crypto.randomUUID(),
       text,
       files,
-      body: requestBody({ type: "submit" }, searchRequested, imageOptions),
+      body: {
+        ...requestBody(
+          { type: "submit" },
+          openuiAction ? false : searchRequested,
+          openuiAction ? undefined : imageOptions,
+          !openuiAction && openuiRequested,
+        ),
+        ...(openuiAction ? { openuiAction } : {}),
+      },
     });
-    setSearchRequested(false);
-    setImageOptions(undefined);
-    clearAttachments();
+    if (!openuiAction) {
+      setSearchRequested(false);
+      setOpenuiRequested(false);
+      setImageOptions(undefined);
+      clearAttachments();
+    }
   }
 
   function handleContinue(messageId: string) {
@@ -690,6 +716,11 @@ function ChatSurface({
           onStartEdit={(id) => !voice.busy && !streaming && setEditingId(id)}
           onCancelEdit={() => setEditingId(null)}
           onSaveEdit={handleSaveEdit}
+          onOpenUIAction={
+            !voice.busy && !streaming && configured && chatQueue.messages.length === 0
+              ? (action) => handleSubmit(action.message, [], action)
+              : undefined
+          }
           onRegenerate={handleRegenerate}
           onContinue={handleContinue}
           onImageReference={!voice.busy && imageAvailable && imageCapability?.supportsEditing !== false ? (file) => {
@@ -768,6 +799,7 @@ function ChatSurface({
             onImageOptions={setImageOptions}
             searchAvailable={searchAvailable && !voice.busy}
             searchRequested={searchAvailable && !voice.busy && searchRequested}
+            openuiRequested={openuiAvailable && !voice.busy && openuiRequested}
             modelLabel={selectedModel?.label}
             modelIconId={
               selectedModel?.modelIconId ?? selectedModel?.providerIconId
@@ -779,6 +811,7 @@ function ChatSurface({
             uploadError={uploadError}
             isAdmin={isAdmin}
             onClearSearch={() => setSearchRequested(false)}
+            onClearOpenUI={() => setOpenuiRequested(false)}
             onOpenModelPicker={() => {
               Keyboard.dismiss();
               pickerRef.current?.present();
@@ -817,6 +850,7 @@ function ChatSurface({
             return;
           }
           setSearchRequested(false);
+          setOpenuiRequested(false);
           setImageOptions(undefined);
           setSelectedId(modelId);
         }}
@@ -851,6 +885,12 @@ function ChatSurface({
           if (!voice.busy) setSearchRequested(next);
         }}
         onPickTool={voice.busy ? undefined : onPickTool}
+        openuiAvailable={openuiAvailable && !voice.busy}
+        openuiUnavailableReason={voice.busy ? "End voice to request an interactive UI." : openuiUnavailableReason}
+        openuiRequested={openuiAvailable && !voice.busy && openuiRequested}
+        onToggleOpenUIRequested={(next) => {
+          if (!voice.busy) setOpenuiRequested(next);
+        }}
       />
     </KeyboardAvoidingView>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { writeText as clipboardWriteText } from "clipboard-polyfill";
 import type { FileUIPart, UIMessage } from "ai";
+import { openUIStateKey, type OpenUIAction, type OpenUIFormState } from "@overtchat/shared";
 import { Streamdown } from "streamdown";
 import {
   Check,
@@ -41,6 +42,7 @@ import { MediaIcon } from "./attachment-icons";
 import { ChainOfThought } from "./ChainOfThought";
 import { GeneratedImageCard } from "./GeneratedImageCard";
 import { MemoryArtifact } from "./MemoryArtifact";
+import { OpenUICard } from "./OpenUICard";
 import { StatsPopover } from "./StatsPopover";
 import {
   MessageActions,
@@ -65,6 +67,8 @@ export function MessageBubble({
   onRegenerate,
   onContinue,
   onImageReference,
+  onOpenUIAction,
+  openuiStates,
   onEdit,
   speech,
   showStats,
@@ -76,6 +80,8 @@ export function MessageBubble({
   onRegenerate: (id: string) => void;
   onContinue?: (id: string) => void;
   onImageReference?: (file: FileUIPart) => void;
+  onOpenUIAction?: (action: OpenUIAction) => void;
+  openuiStates?: Map<string, OpenUIFormState>;
   onEdit: (id: string, text: string, files: FileUIPart[]) => void;
   speech: ReturnType<typeof useSpeech>;
   showStats: boolean;
@@ -139,6 +145,8 @@ export function MessageBubble({
       onRegenerate={onRegenerate}
       onContinue={onContinue}
       onImageReference={onImageReference}
+      onOpenUIAction={onOpenUIAction}
+      openuiStates={openuiStates}
       speech={speech}
       showStats={showStats}
       stats={stats}
@@ -153,6 +161,8 @@ function AssistantBubble({
   onRegenerate,
   onContinue,
   onImageReference,
+  onOpenUIAction,
+  openuiStates,
   speech,
   showStats,
   stats,
@@ -163,6 +173,8 @@ function AssistantBubble({
   onRegenerate: (id: string) => void;
   onContinue?: (id: string) => void;
   onImageReference?: (file: FileUIPart) => void;
+  onOpenUIAction?: (action: OpenUIAction) => void;
+  openuiStates?: Map<string, OpenUIFormState>;
   speech: ReturnType<typeof useSpeech>;
   showStats: boolean;
   stats: MessageStats | null;
@@ -223,6 +235,18 @@ function AssistantBubble({
                   part={seg.part}
                   streaming={streaming}
                   onReference={canAct ? onImageReference : undefined}
+                />
+              );
+            }
+            if (seg.kind === "openui") {
+              return (
+                <OpenUICard
+                  key={seg.part.toolCallId}
+                  messageId={message.id}
+                  part={seg.part}
+                  streaming={streaming}
+                  initialState={openuiStates?.get(openUIStateKey(message.id, seg.part.toolCallId))}
+                  onAction={canAct ? onOpenUIAction : undefined}
                 />
               );
             }
