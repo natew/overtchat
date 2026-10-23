@@ -13,6 +13,10 @@ import type {
   CatalogModelPricing,
   ModelDiscoveryInput,
 } from "@/lib/model-config/schema";
+import type {
+  ReasoningOverride,
+  ThinkingCheckResult,
+} from "@/lib/model-config/reasoning-override";
 import { apiUrl } from "@/lib/api-url";
 
 export interface AvailableModel {
@@ -189,4 +193,20 @@ function readReasoningLevel(value: unknown): ModelReasoningLevel | undefined {
   return REASONING_EFFORTS.includes(value as ReasoningEffort)
     ? (value as ReasoningEffort)
     : undefined;
+}
+
+export async function checkThinkingLevels(
+  input: ModelDiscoveryInput & {
+    model: string;
+    reasoningOverride: ReasoningOverride;
+  },
+): Promise<ThinkingCheckResult> {
+  const res = await fetch(apiUrl("/api/models/thinking-check"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const json = (await res.json()) as ThinkingCheckResult & { error?: string };
+  if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+  return json;
 }

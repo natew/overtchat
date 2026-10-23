@@ -2,6 +2,10 @@ import { z } from "zod";
 import { CustomImageOptionsSchema, customImageOptions } from "./image-options";
 import { REASONING_EFFORTS, type ModelCapabilities } from "@overtchat/shared";
 import {
+  ReasoningOverrideSchema,
+  type ReasoningOverride,
+} from "./reasoning-override";
+import {
   API_FORMAT_IDS,
   PROVIDERS,
   PROVIDER_IDS,
@@ -47,6 +51,8 @@ export interface AdminModelConfig {
   resolvedContextWindow?: number;
   /** Runtime fields with exact-catalog fallback for admin UI guidance. */
   resolvedCapabilities?: ModelCapabilities;
+  /** Null follows the catalog or saved detection; survives re-detection. */
+  reasoningOverride: ReasoningOverride | null;
   systemPrompt: string | null;
   providerOptions: Record<string, unknown> | null;
   toolCallingEnabled: boolean;
@@ -91,6 +97,16 @@ const RuntimeModelFields = {
     .nullish()
     .transform((value) => value ?? true),
 };
+
+export function supportsLocalReasoningConfig(
+  providerId: string,
+  apiFormat: string,
+): boolean {
+  return (
+    ["vllm", "llamacpp", "sglang"].includes(providerId) ||
+    (providerId === "custom" && apiFormat === "openai-chat")
+  );
+}
 
 const ModelCapabilitiesSchema = z
   .object({
@@ -144,6 +160,9 @@ export const ModelConfigSchema = ProviderConnectionObject.extend({
   discoveredCapabilities: ModelCapabilitiesSchema.nullish().transform(
     (value) => value ?? null,
   ),
+  reasoningOverride: ReasoningOverrideSchema.nullish().transform(
+    (value) => value ?? null,
+  ),
   systemPrompt: z
     .string()
     .nullish()
@@ -158,6 +177,18 @@ export const ModelConfigSchema = ProviderConnectionObject.extend({
 })
   .superRefine((value, context) => {
     validateProviderConnection(value, context);
+    const override = value.reasoningOverride;
+    if (
+      override &&
+      !supportsLocalReasoningConfig(value.providerId, value.apiFormat)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["reasoningOverride"],
+        message:
+          "Custom thinking levels require a local or Chat Completions provider.",
+      });
+    }
     if (value.modelType === "image") {
       if (!["openai", "google", "custom"].includes(value.providerId)) {
         context.addIssue({
@@ -221,6 +252,7 @@ export const ModelConfigSchema = ProviderConnectionObject.extend({
           contextWindow: null,
           discoveredContextWindow: null,
           discoveredCapabilities: null,
+          reasoningOverride: null,
           pricing: null,
         }
       : value,

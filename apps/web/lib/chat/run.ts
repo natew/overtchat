@@ -129,6 +129,7 @@ import {
   resolveModelContextWindow,
 } from "@/lib/providers/server/model-catalog";
 import { createConfiguredLanguageModel } from "@/lib/providers/server/registry";
+import { readReasoningOverride } from "@/lib/model-config/reasoning-override";
 import { readLlamaCppInferenceActivity } from "@/lib/providers/server/llamacpp-activity";
 import * as cancelRegistry from "@/lib/streams/cancel-registry";
 import { getStreamContext } from "@/lib/streams/context";
@@ -275,10 +276,19 @@ export async function runChat(
     modelConfig.discoveredCapabilities,
     modelConfig.providerId,
     modelConfig.model,
+    modelConfig.reasoningOverride,
   );
+  const reasoningOverride = readReasoningOverride(
+    modelConfig.reasoningOverride,
+  );
+  const reasoningRequest =
+    reasoningLevel === "default"
+      ? undefined
+      : reasoningOverride?.requests[reasoningLevel];
   if (
     reasoningLevel !== "default" &&
-    !modelSupportsChatReasoningLevel(modelCapabilities, reasoningLevel)
+    (!modelSupportsChatReasoningLevel(modelCapabilities, reasoningLevel) ||
+      (reasoningOverride && !reasoningRequest))
   ) {
     throw new ChatRequestError(
       `Reasoning level ${reasoningLevel} is unavailable for this model`,
@@ -302,6 +312,7 @@ export async function runChat(
     toolCallingEnabled: modelConfig.toolCallingEnabled,
     supportsImageInput,
     reasoningLevel,
+    reasoningRequest,
   });
   const provider = getProvider(modelConfig.providerId);
   const contextWindow = resolveModelContextWindow(

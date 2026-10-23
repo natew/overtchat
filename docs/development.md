@@ -335,6 +335,42 @@ tests exercise the actual generated catalog, including pricing compatibility for
 every priced model. A legitimate upstream price change should produce a catalog
 diff for review without failing a test that expects yesterday's prices.
 
+## Local thinking controls validation
+
+Administrator thinking levels live in `model_configs.reasoning_override` as
+request fields per level plus a declared default. The server derives the
+public `reasoningControls` from them, so clients and `CLIENT_API_LEVEL` are
+unchanged. Chat rejects levels the override does not define, and local
+adapters merge the selected level's fields into the request body.
+
+```sh
+npm run test -w apps/web -- lib/model-config lib/providers/server lib/db/modelConfigs.test.ts app/api/chat/route.test.ts
+E2E_PORT=4857 npm run test:e2e -w apps/web -- model-thinking.spec.ts composer-model-picker.spec.ts
+```
+
+The browser tests exercise presets, the template check with `/tokenize`
+fallback, an unavailable render endpoint, JSON validation, persistence, and
+composer requests against a local HTTP fixture. To send one small generation
+per level to a running model, opt in to the live test:
+
+```sh
+THINKING_LIVE_URL=http://localhost:8000/v1 \
+THINKING_LIVE_PROVIDER=custom \
+THINKING_LIVE_REQUESTS='{"low":{"reasoning_effort":25},"high":{"reasoning_effort":100}}' \
+THINKING_LIVE_DEFAULT=high \
+npm run test -w apps/web -- lib/providers/server/thinking.live.test.ts
+```
+
+`THINKING_LIVE_PROVIDER` defaults to `vllm`, and `THINKING_LIVE_REQUESTS`
+defaults to the `enable_thinking` preset. Set `THINKING_LIVE_MODEL` to choose
+a model other than the first listed one and `THINKING_LIVE_API_KEY` if
+required. For vLLM and llama.cpp, the test first requires the template check
+to report distinct levels. Each generation must answer correctly with the
+level's fields in the request body; Off must produce no reasoning and On must
+produce some. `THINKING_LIVE_REPORT` writes a small JSON report without
+credentials or transcripts. The test does not modify saved models or chats,
+and ordinary unit runs skip it.
+
 ## Chat compaction validation
 
 Regular chat automatically compacts at 80% of the resolved model context window,
