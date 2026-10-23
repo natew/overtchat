@@ -613,6 +613,42 @@ details and your server's LAN or HTTPS URL. With OvertChat Cloud, the
 with their own chats and projects. Only the first account uses public signup;
 administrators create subsequent accounts.
 
+## Shared chat links
+
+Use **Share chat** in a saved conversation to preview it and create a public
+link. Anyone who can reach your server and has the link can read the snapshot
+without an account, including its attachments, generated images, reasoning,
+tool results, and artifacts. System instructions, provider metadata, and account
+settings are excluded. Recipients cannot edit the chat or run its tools.
+
+Later messages and edits remain private until you select **Update link**.
+**Unshare** disables the link and its file URLs. Deleting the original chat or
+its owner also removes the share. Web and desktop users can review and revoke
+links under **Settings → Data → Shared chats**; mobile users can manage a link
+from the conversation's sharing dialog. Previously downloaded copies remain
+with their recipients.
+
+Links prefer the server's configured public address (`BETTER_AUTH_URL`, set by
+managed setup), including its `https://<name>.overtchat.app` address when Cloud
+is configured, even when the client connects locally. Without a configured
+non-loopback address, they use the client's current server address. A LAN-only
+or VPN-only server remains reachable only on that network. Shared files remain
+in the server's upload store while the snapshot references them, even if they
+are edited out of the original chat.
+Normal database and upload-directory backups include shared conversations.
+
+Public transcripts load 50 messages per request. Updating a share replaces its
+contents at the same URL; it is not a permanent citation of a specific revision.
+If an update happens between pages, the reader must reload before continuing.
+
+Public reads are limited per server process: each link permits 120 transcript
+requests and 600 file requests per minute; total server budgets are 1,200 and
+6,000 respectively. A rejected request returns HTTP 429 with `Retry-After`.
+These budgets do not trust client-supplied forwarding headers. They are shared
+by readers of a link, so very busy links may temporarily throttle everyone.
+The counters reset on server restart; upstream proxy limits can provide
+additional protection for large public deployments.
+
 ## Desktop
 
 The desktop app connects to your existing OvertChat server. It does not install
