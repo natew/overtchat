@@ -95,3 +95,50 @@ export function twoFactorSignInExpired(
     error?.code === "TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE"
   );
 }
+
+type SignInApprovalAnswer = Exclude<SignInApprovalState, { status: "pending" }>;
+
+// React Native's AbortSignal has no `throwIfAborted`.
+function stopIfAborted(signal: AbortSignal) {
+  if (signal.aborted) throw signal.reason ?? new Error("Aborted");
+}
+
+/**
+ * Waits for the user's other device to answer a sign-in approval request.
+ * `read` loads `GET /api/auth/two-factor/approval`; with `wait`, the server
+ * holds it open until the answer arrives. A dropped connection is retried a
+ * few times before giving up.
+ */
+export async function waitForSignInApproval({
+  read,
+  onPending,
+  signal,
+  retryDelayMs = 2_000,
+  maxFailures = 5,
+}: {
+  read: (wait: boolean) => Promise<SignInApprovalState>;
+  onPending: (state: Extract<SignInApprovalState, { status: "pending" }>) => void;
+  signal: AbortSignal;
+  retryDelayMs?: number;
+  maxFailures?: number;
+}): Promise<SignInApprovalAnswer> {
+  let wait = false;
+  let failures = 0;
+  for (;;) {
+    stopIfAborted(signal);
+    let state: SignInApprovalState;
+    try {
+      state = await read(wait);
+      failures = 0;
+    } catch (error) {
+      stopIfAborted(signal);
+      if (++failures >= maxFailures) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      continue;
+    }
+    stopIfAborted(signal);
+    if (state.status !== "pending") return state;
+    onPending(state);
+    wait = true;
+  }
+}
