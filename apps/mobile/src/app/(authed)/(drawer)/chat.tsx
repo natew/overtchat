@@ -1,3 +1,4 @@
+import { ChatUsageBar } from "@/components/chat/ChatUsageBar";
 import { Ionicons } from "@expo/vector-icons";
 import { useChat } from "@ai-sdk/react";
 import {
@@ -690,6 +691,7 @@ function ChatSurface({
       behavior="padding"
       keyboardVerticalOffset={headerHeight}
     >
+      <ChatUsageBar chatId={chatId} persisted={chatPersisted} streaming={streaming} messages={messages} contextWindow={selectedModel?.contextWindow} />
       <MiniSpeechPlayer speech={speech} />
       {messages.length === 0 ? (
         <View
@@ -722,7 +724,7 @@ function ChatSurface({
                 },
               ]}
             >
-              An admin can add one in Settings → Models on the web.
+              An admin can add one in Settings → Models.
             </Text>
           )}
           {modelsError && (

@@ -1,4 +1,7 @@
 export const queryKeys = {
+  chatUsage: (id: string) => ["chat", id, "usage"] as const,
+  settingsRoot: () => ["settings"] as const,
+  settings: (path: string) => ["settings", path] as const,
   authCookie: (server: string, sessionId?: string, updatedAt?: string) =>
     ["authCookie", server, sessionId, updatedAt] as const,
   capabilities: () => ["capabilities", "public"] as const,

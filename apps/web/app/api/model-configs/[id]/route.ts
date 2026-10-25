@@ -23,7 +23,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin(req);
-  if ("error" in guard) return guard.error;
+  if (guard.error) return guard.error;
 
   const { id } = await params;
   const existing = await getModelConfig(id);
@@ -59,7 +59,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const guard = await requireAdmin(req);
-  if ("error" in guard) return guard.error;
+  if (guard.error) return guard.error;
 
   const { id } = await params;
   await deleteModelConfig(id);
