@@ -38,9 +38,16 @@ Advanced MCP and agent workspace setup can open the matching web settings page.
 - Mobile does not expose workspace file browsing. Tool command, change, and
   output details use `AgentToolDetails`; these are supplied by the agent and do
   not fetch workspace files. Approval actions preserve provider response values.
+- `AgentTranscript` is an inverted `FlatList`, so offset 0 is the newest
+  content. Keep its `maintainVisibleContentPosition` constant: iOS reapplies
+  the anchor from the last update made with it enabled. Following the newest
+  content and holding an expanded row in place are handled in the component.
 - `src/lib/agents/stream.ts` owns the foreground SSE lifecycle. Use bridge
   replicas for cursor/epoch reconciliation, abort subscriptions while away,
   and reconcile before reconnecting. Never automatically retry agent commands.
+  Hermes copies strings on slice and concatenation, so parsing must stay
+  linear in the bytes received; per-line buffer copies froze the JS thread on
+  large bursts.
   Drafts and unresolved message identities are scoped to server, user, and
   session in `src/lib/agents/drafts.ts`.
 
