@@ -1569,6 +1569,17 @@ web app stores the latest turn and a per-session read watermark on the
 connector's clock. The fields are optional, so older connectors and journals
 remain compatible.
 
+For administrators the sidebar switches between Chat and Agents. The mode
+follows the URL (`/agents…` is Agents; settings keep the current mode), and
+each mode returns to the page last open in it. Agents mode lists sessions that
+need you (an approval, a question or an unseen failure), are working, or
+finished unseen, above the workspace tree. While in Chat mode, the Agents
+toggle counts sessions that need you. Opening a session while the page is
+visible marks its latest turn read. `/agents` opens a new session with the
+most recently used agent and workspace, and offers other recent ones.
+`apps/web/e2e/agent-attention.spec.ts` scripts these states through stubbed
+session-list and event-stream responses.
+
 ```sh
 npm run test -w packages/agent-runtime -- src/runtime/attention.test.ts src/runtime/registry.test.ts
 RUN_ATTENTION_INTEGRATION=claude,codex,omp npm run test -w packages/agent-runtime -- src/runtime/attention.integration.test.ts

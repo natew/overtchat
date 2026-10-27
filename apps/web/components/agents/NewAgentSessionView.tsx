@@ -2,7 +2,7 @@
 
 import { ErrorNotice } from "@/components/ui/error-notice";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import { generateId } from "ai";
 import type {
@@ -32,6 +32,7 @@ import {
   resolveAgentSessionDraftSelection,
 } from "@/lib/agents/sessionDraft";
 import { AGENT_PROVIDER_VISUALS } from "@/lib/agents/providerVisuals";
+import { recentAgentSetups } from "@/lib/agents/setups";
 import {
   useAgentWorkspaceCatalog,
   useAgentConnections,
@@ -43,6 +44,10 @@ import { newAgentComposerDraftScope } from "@/lib/chat/composer-drafts";
 import { useLocalStorage } from "@/lib/useLocalStorage";
 import { cn } from "@/lib/utils";
 import { AgentComposer } from "./AgentComposer";
+import { AgentProviderLogo } from "./AgentSessionStatus";
+
+/** Other recently used agents and workspaces offered for a quick switch. */
+const RECENT_SETUP_COUNT = 3;
 
 export function NewAgentSessionView({
   provider,
@@ -79,6 +84,16 @@ export function NewAgentSessionView({
       })),
     );
   const catalog = useAgentWorkspaceCatalog(targetWorkspaceId, provider);
+  const otherSetups = useMemo(
+    () =>
+      recentAgentSetups(connections.data ?? [])
+        .filter(
+          (setup) =>
+            setup.activityAt > 0 && setup.workspaceId !== workspaceId,
+        )
+        .slice(0, RECENT_SETUP_COUNT),
+    [connections.data, workspaceId],
+  );
   const createSession = useCreateAgentSession();
   const [sendingFirstPrompt, setSendingFirstPrompt] = useState(false);
   const [modelId, setModelId] = useState("");
@@ -300,6 +315,42 @@ export function NewAgentSessionView({
             <p className="mt-1 text-sm text-muted-foreground">
               {workspaceName}
             </p>
+            {!forkId && otherSetups.length > 0 && (
+              <nav aria-label="Recent setups" className="mt-8">
+                <h2 className="text-xs font-medium text-muted-foreground">
+                  Recent
+                </h2>
+                <ul className="mt-2 flex flex-wrap justify-center gap-2">
+                  {otherSetups.map((setup) => (
+                    <li key={setup.workspaceId}>
+                      <Link
+                        to="/agents/new"
+                        search={{
+                          workspaceId: setup.workspaceId,
+                          provider: setup.provider,
+                        }}
+                        replace
+                        className="flex w-60 items-center gap-2.5 rounded-lg border bg-card px-3 py-2 text-left outline-none motion-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <AgentProviderLogo
+                          provider={setup.provider}
+                          className="size-6 rounded-md opacity-100 [&>img]:size-4"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {setup.workspaceName}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {agentProviderMetadata(setup.provider).label} ·{" "}
+                            {setup.hostLabel}
+                          </span>
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            )}
           </div>
         </div>
 

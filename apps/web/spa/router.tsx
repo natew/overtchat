@@ -13,6 +13,7 @@ import {
   activityProfileRoute,
   activityRoute,
   agentSessionRoute,
+  agentsHomeRoute,
   libraryRoute,
   newAgentSessionRoute,
 } from "@/spa/routes/pages";
@@ -42,6 +43,7 @@ const routeTree = rootRoute.addChildren([
     homeRoute,
     chatRoute,
     projectRoute,
+    agentsHomeRoute,
     newAgentSessionRoute,
     agentSessionRoute,
     libraryRoute,

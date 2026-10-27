@@ -306,10 +306,14 @@ test("explains agent access before setup", async ({ page }, testInfo) => {
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL("**/", { timeout: 15_000 });
 
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
+  await page.waitForURL((url) => url.pathname === "/agents");
   await expect(
     page.getByText("Agent workspaces", { exact: true }),
   ).toBeVisible();
-  const addWorkspace = page.getByRole("link", { name: "Add workspace", exact: true });
+  const addWorkspace = page
+    .getByRole("complementary")
+    .getByRole("link", { name: "Add workspace", exact: true });
   await expect(addWorkspace).toHaveAttribute("href", "/settings/connections?add=1");
   await addWorkspace.click();
   await page.waitForURL("**/settings/connections?add=1");
@@ -618,7 +622,7 @@ test("groups providers by directory, filters chats, refreshes globally, and open
     });
   });
 
-  await page.goto("/");
+  await page.goto("/agents");
   await expect(
     page.getByRole("button", { name: "Agent workspace options" }),
   ).toBeVisible();

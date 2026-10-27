@@ -33,6 +33,11 @@ import {
   visibleAgentSessions,
 } from "@/lib/agents/sidebar";
 import {
+  agentSessionNeedsOwner,
+  agentSessionState,
+  mostUrgentAgentSessionState,
+} from "@/lib/agents/attention";
+import {
   agentConnectionTarget,
   groupAgentWorkspaces,
   nestAgentWorkspaceGroups,
@@ -42,7 +47,6 @@ import {
 } from "@/lib/agents/workspaces";
 import { useSidebar } from "@/components/sidebar-context";
 import { motionClasses } from "@/lib/motion";
-import { AGENT_PROVIDER_VISUALS } from "@/lib/agents/providerVisuals";
 import {
   useAgentProviderSnapshot,
   useDeleteAgentWorkspaceGroup,
@@ -57,6 +61,11 @@ import { cn } from "@/lib/utils";
 import { NewAgentSessionDialog } from "@/components/agents/NewAgentSessionDialog";
 import { NewAgentWorktreeDialog } from "@/components/agents/NewAgentWorktreeDialog";
 import { AgentWorktreeRemovalDetails } from "@/components/agents/AgentWorktreeRemovalDetails";
+import {
+  AgentProviderLogo,
+  AgentSessionStatusIcon,
+  AgentSessionStatusSlot,
+} from "@/components/agents/AgentSessionStatus";
 import { authClient } from "@/lib/auth/client";
 import { getApiOrigin } from "@/lib/api-url";
 import { useLocalStorage } from "@/lib/useLocalStorage";
@@ -113,7 +122,8 @@ export function SidebarAgentWorkspaces({
             ({ workspace }) => workspace.id === newWorkspaceId,
           ))
       ) {
-        void navigate({ to: "/" });
+        // Stay in Agents mode; its home opens another workspace if any remain.
+        void navigate({ to: "/agents" });
       }
       toast.success({
         title: pendingRemovalWorktree
@@ -210,7 +220,10 @@ export function SidebarAgentWorkspaces({
         .flatMap((group) =>
           group.sessions
             .filter(
-              (item) => !providerFilter || item.provider === providerFilter,
+              (item) =>
+                (!providerFilter || item.provider === providerFilter) &&
+                // Sessions that need attention are already listed above.
+                agentSessionState(item.session) === "idle",
             )
             .map((item) => ({ item, group })),
         )
@@ -474,6 +487,12 @@ function WorkspaceNode({
   const runningCount = filteredSessions.filter(({ session }) =>
     agentSessionIsRunning(session),
   ).length;
+  const waitingCount = filteredSessions.filter(({ session }) =>
+    agentSessionNeedsOwner(agentSessionState(session)),
+  ).length;
+  const urgentState = mostUrgentAgentSessionState(
+    filteredSessions.map(({ session }) => session),
+  );
   const visibleSessionItems = visibleAgentSessions(
     filteredSessions.map(({ session }) => session),
     sessionsExpanded,
@@ -556,6 +575,16 @@ function WorkspaceNode({
               <span className="min-w-0 flex-1 truncate font-medium leading-5">
                 {group.name}
               </span>
+              {waitingCount > 0 && (
+                <span
+                  role="status"
+                  aria-label={`${waitingCount} ${waitingCount === 1 ? "chat needs" : "chats need"} you in ${group.name}`}
+                  className="flex shrink-0 items-center gap-1 text-[10px] text-amber-500"
+                >
+                  <AgentSessionStatusIcon state={urgentState} className="size-3" />
+                  <span className="tabular-nums">{waitingCount}</span>
+                </span>
+              )}
               {runningCount > 0 && (
                 <span
                   role="status"
@@ -567,6 +596,17 @@ function WorkspaceNode({
                     className={cn("size-3", motionClasses.spinner)}
                   />
                   <span className="tabular-nums">{runningCount}</span>
+                </span>
+              )}
+              {/* An open workspace lists its finished chats instead. */}
+              {!open && urgentState === "unread" && (
+                <span
+                  role="status"
+                  aria-label={`Finished chats to review in ${group.name}`}
+                  title="Finished chats to review"
+                  className="flex shrink-0 items-center"
+                >
+                  <AgentSessionStatusIcon state="unread" className="size-3" />
                 </span>
               )}
             </span>
@@ -804,8 +844,10 @@ function SessionLink({
   const { closeMobile } = useSidebar();
   const { session, provider } = item;
   const title = agentSessionDisplayTitle(session) || "New session";
+  const state = agentSessionState(session);
+  const active = pathname === `/agents/${session.id}`;
   return (
-    <li>
+    <li className="group relative">
       <Link
         to="/agents/$id"
         params={{ id: session.id }}
@@ -813,16 +855,16 @@ function SessionLink({
           onNavigate?.();
           closeMobile();
         }}
-        aria-current={pathname === `/agents/${session.id}` ? "page" : undefined}
+        aria-current={active ? "page" : undefined}
         title={`${title} · ${agentProviderMetadata(provider).label}${context ? ` · ${context}` : ""}`}
         className={cn(
-          "flex min-h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-muted-foreground outline-none motion-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11",
+          "flex min-h-7 min-w-0 items-center gap-1.5 rounded-md py-1 pr-6 pl-1.5 text-xs text-muted-foreground outline-none motion-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring max-md:min-h-11 max-md:pr-8",
           context && "min-h-10",
-          pathname === `/agents/${session.id}` &&
-            "bg-sidebar-accent text-foreground",
+          active && "bg-sidebar-accent text-foreground",
+          state !== "idle" && state !== "working" && "text-sidebar-foreground",
         )}
       >
-        <ProviderLogo provider={provider} />
+        <AgentProviderLogo provider={provider} />
         <span className="min-w-0 flex-1">
           <span
             className={cn(
@@ -838,54 +880,10 @@ function SessionLink({
             </span>
           )}
         </span>
-        <RuntimeActivityIndicator
-          active={agentSessionIsRunning(session)}
-          label={`${title} is working`}
-        />
       </Link>
+      <span className="absolute inset-y-0 right-0.5 flex items-center">
+        <AgentSessionStatusSlot session={session} state={state} title={title} />
+      </span>
     </li>
-  );
-}
-
-function ProviderLogo({ provider }: { provider: AgentProviderId }) {
-  const icon = AGENT_PROVIDER_VISUALS[provider];
-  return (
-    <span
-      className={cn(
-        "flex size-3.5 shrink-0 items-center justify-center rounded-sm opacity-80",
-        icon.darkSurface && "bg-zinc-950/90",
-      )}
-      aria-hidden="true"
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={icon.icon} alt="" className="size-2.5 object-contain" />
-    </span>
-  );
-}
-
-function RuntimeActivityIndicator({
-  active,
-  label,
-}: {
-  active: boolean;
-  label: string;
-}) {
-  return (
-    // Keep a stable slot for working, attention, and other future chat states.
-    <span className="flex size-4 shrink-0 items-center justify-center">
-      {active && (
-        <span
-          role="status"
-          aria-label={label}
-          title={label}
-          className="flex size-4 items-center justify-center text-muted-foreground"
-        >
-          <Loader2
-            aria-hidden="true"
-            className={cn("size-3.5", motionClasses.spinner)}
-          />
-        </span>
-      )}
-    </span>
   );
 }

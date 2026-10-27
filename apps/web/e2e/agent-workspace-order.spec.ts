@@ -71,12 +71,20 @@ async function setup(
     .route("**/api/agent-workspaces/*/git-status", (route) =>
       route.fulfill({ json: { status: { isGit: false } } }),
     );
+  await page
+    .context()
+    .route("**/api/agent-workspaces/*/catalog?*", (route) =>
+      route.fulfill({ json: { provider: "codex", models: [], modes: [] } }),
+    );
   await page.goto(await setupUrl());
   await page.locator("#name").fill("Workspace Admin");
   await page.locator("#email").fill("workspace-admin@overtchat-test.local");
   await page.locator("#password").fill("test-password-123");
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL("**/");
+  // Agent workspaces are listed in the sidebar's Agents mode.
+  await page.goto("/agents");
+  await page.waitForURL(/\/agents\/new\?/);
   return (next: string[]) => {
     names = next;
   };
@@ -521,7 +529,7 @@ test("invalid saved data and unavailable storage do not break the sidebar", asyn
 test("saved order updates another open tab", async ({ page, context }) => {
   await setup(page);
   const second = await context.newPage();
-  await second.goto("/");
+  await second.goto("/agents");
   await expectOrder(second, workspaceNames);
   await drag(page, "Gamma", "Alpha");
   await expectOrder(second, ["Gamma", "Alpha", "Beta"]);
@@ -721,7 +729,11 @@ test("removing the last workspace retries a partial failure using only workspace
   await expect(dialog).toBeHidden();
   expect(deleted).toEqual(["codex-Gamma", "pi-Gamma"]);
   await expect(list(page)).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Add workspace", exact: true }))
+  await expect(
+    page
+      .getByRole("complementary")
+      .getByRole("link", { name: "Add workspace", exact: true }),
+  )
     .toHaveAttribute("href", "/settings/connections?add=1");
 });
 

@@ -16,8 +16,12 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  SquarePen,
 } from "lucide-react";
-import type { AgentProviderId } from "@overtchat/agent-bridge";
+import type {
+  AgentConnectionListItem,
+  AgentProviderId,
+} from "@overtchat/agent-bridge";
 import { agentProviderMetadata } from "@overtchat/agent-bridge";
 import { SidebarChatList, SidebarItem } from "@/components/SidebarChatList";
 import {
@@ -25,6 +29,12 @@ import {
   CreateProjectDialog,
 } from "@/components/SidebarProjects";
 import { SidebarAgentWorkspaces } from "@/components/SidebarAgentWorkspaces";
+import { SidebarAgentAttention } from "@/components/SidebarAgentAttention";
+import {
+  SidebarModeToggle,
+  useSidebarMode,
+} from "@/components/SidebarModeToggle";
+import { agentAttentionCounts } from "@/lib/agents/attention";
 import { useSidebar } from "@/components/sidebar-context";
 import { useActiveChatIds, useChats } from "@/lib/queries/chats";
 import { usePublicCapabilities } from "@/lib/queries/capabilities";
@@ -110,6 +120,109 @@ export function SidebarClient({ isAdmin }: { isAdmin: boolean }) {
     }));
   }, [chats, projectOptions]);
 
+  const chatSidebar = (
+    <>
+      <nav className="flex flex-col gap-0.5 py-1">
+        <Link
+          to="/"
+          onClick={(e) => {
+            closeMobile();
+            if (pathname === "/") {
+              // Reloading `/` starts a new draft and keeps its project.
+              e.preventDefault();
+              void router.invalidate();
+            }
+          }}
+          className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent"
+        >
+          <Pencil className="size-4 shrink-0 text-muted-foreground" />
+          <span className="flex-1">New chat</span>
+          <Shortcut keys={["Ctrl", "Shift", "O"]} />
+          <LinkPendingIndicator to="/" />
+        </Link>
+        <button
+          type="button"
+          onClick={() => {
+            closeMobile();
+            openPalette();
+          }}
+          className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent"
+        >
+          <Search className="size-4 shrink-0 text-muted-foreground" />
+          <span className="flex-1 text-left">Search chats</span>
+          <Shortcut keys={["Ctrl", "K"]} />
+        </button>
+        <Link
+          to="/library"
+          onClick={closeMobile}
+          aria-current={pathname === "/library" ? "page" : undefined}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent",
+            pathname === "/library" && "bg-sidebar-accent",
+          )}
+        >
+          <Library className="size-4 shrink-0 text-muted-foreground" />
+          <span className="flex-1">Library</span>
+          <LinkPendingIndicator to="/library" />
+        </Link>
+        <Link
+          to="/activity"
+          onClick={closeMobile}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent",
+            pathname.startsWith("/activity") && "bg-sidebar-accent",
+          )}
+        >
+          <Activity className="size-4 shrink-0 text-muted-foreground" />
+          <span className="flex-1">Activity</span>
+          <LinkPendingIndicator to="/activity" />
+        </Link>
+      </nav>
+
+      {chats.some((chat) => chat.pinned) && (
+        <section aria-label="Pinned chats">
+          <SectionLabel>Pinned</SectionLabel>
+          <ul className="flex flex-col gap-0.5">
+            {chats.filter((chat) => chat.pinned).map((chat) => (
+              <SidebarItem
+                key={chat.id}
+                chat={chat}
+                projects={projectOptions}
+                currentProjectId={chat.projectId}
+                generating={activeChats.has(chat.id)}
+                pinningSupported={pinningSupported}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <SectionLabel>Projects</SectionLabel>
+      <SidebarProjects
+        projects={projectsWithChats}
+        activeChatIds={activeChats}
+        pinningSupported={pinningSupported}
+      />
+      <button
+        type="button"
+        onClick={() => setCreatingProject(true)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground motion-colors hover:bg-sidebar-accent hover:text-foreground"
+      >
+        <FolderPlus className="size-4 shrink-0" />
+        <span>New project</span>
+      </button>
+
+
+      <SidebarChatList
+        chats={unprojected}
+        emptyMessage={chats.length > 0 ? "No recent chats" : "No chats yet"}
+        projects={projectOptions}
+        activeChatIds={activeChats}
+        pinningSupported={pinningSupported}
+      />
+    </>
+  );
+
   return (
     <>
       <div data-titlebar data-titlebar-inset className="flex h-12 shrink-0 items-center justify-between px-3">
@@ -124,107 +237,11 @@ export function SidebarClient({ isAdmin }: { isAdmin: boolean }) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2 pb-2">
-        <nav className="flex flex-col gap-0.5 py-1">
-          <Link
-            to="/"
-            onClick={(e) => {
-              closeMobile();
-              if (pathname === "/") {
-                // Reloading `/` starts a new draft and keeps its project.
-                e.preventDefault();
-                void router.invalidate();
-              }
-            }}
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent"
-          >
-            <Pencil className="size-4 shrink-0 text-muted-foreground" />
-            <span className="flex-1">New chat</span>
-            <Shortcut keys={["Ctrl", "Shift", "O"]} />
-            <LinkPendingIndicator to="/" />
-          </Link>
-          <button
-            type="button"
-            onClick={() => {
-              closeMobile();
-              openPalette();
-            }}
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent"
-          >
-            <Search className="size-4 shrink-0 text-muted-foreground" />
-            <span className="flex-1 text-left">Search chats</span>
-            <Shortcut keys={["Ctrl", "K"]} />
-          </button>
-          <Link
-            to="/library"
-            onClick={closeMobile}
-            aria-current={pathname === "/library" ? "page" : undefined}
-            className={cn(
-              "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent",
-              pathname === "/library" && "bg-sidebar-accent",
-            )}
-          >
-            <Library className="size-4 shrink-0 text-muted-foreground" />
-            <span className="flex-1">Library</span>
-            <LinkPendingIndicator to="/library" />
-          </Link>
-          <Link
-            to="/activity"
-            onClick={closeMobile}
-            className={cn(
-              "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent",
-              pathname.startsWith("/activity") && "bg-sidebar-accent",
-            )}
-          >
-            <Activity className="size-4 shrink-0 text-muted-foreground" />
-            <span className="flex-1">Activity</span>
-            <LinkPendingIndicator to="/activity" />
-          </Link>
-        </nav>
-
-        {chats.some((chat) => chat.pinned) && (
-          <section aria-label="Pinned chats">
-            <SectionLabel>Pinned</SectionLabel>
-            <ul className="flex flex-col gap-0.5">
-              {chats.filter((chat) => chat.pinned).map((chat) => (
-                <SidebarItem
-                  key={chat.id}
-                  chat={chat}
-                  projects={projectOptions}
-                  currentProjectId={chat.projectId}
-                  generating={activeChats.has(chat.id)}
-                  pinningSupported={pinningSupported}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
-
-        <SectionLabel>Projects</SectionLabel>
-        <SidebarProjects
-          projects={projectsWithChats}
-          activeChatIds={activeChats}
-          pinningSupported={pinningSupported}
-        />
-        <button
-          type="button"
-          onClick={() => setCreatingProject(true)}
-          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground motion-colors hover:bg-sidebar-accent hover:text-foreground"
-        >
-          <FolderPlus className="size-4 shrink-0" />
-          <span>New project</span>
-        </button>
-
-        {isAdmin && <AdminAgentWorkspaces />}
-
-        <SidebarChatList
-          chats={unprojected}
-          emptyMessage={chats.length > 0 ? "No recent chats" : "No chats yet"}
-          projects={projectOptions}
-          activeChatIds={activeChats}
-          pinningSupported={pinningSupported}
-        />
-      </div>
+      {isAdmin ? (
+        <AdminSidebarBody chat={chatSidebar} />
+      ) : (
+        <div className="flex-1 overflow-y-auto px-2 pb-2">{chatSidebar}</div>
+      )}
 
       <CreateProjectDialog
         open={creatingProject}
@@ -234,8 +251,68 @@ export function SidebarClient({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-function AdminAgentWorkspaces() {
+/** Admins switch between chats and agents; agent state streams in both. */
+function AdminSidebarBody({ chat }: { chat: React.ReactNode }) {
+  const mode = useSidebarMode();
   const { data: connections = [], isPending } = useAgentConnections();
+  useAgentConnectionSessionDirectory(connections);
+  const agentCounts = useMemo(
+    () => agentAttentionCounts(connections),
+    [connections],
+  );
+  return (
+    <>
+      <SidebarModeToggle mode={mode} agentCounts={agentCounts} />
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {mode === "agents" ? (
+          <AgentsSidebar connections={connections} isPending={isPending} />
+        ) : (
+          chat
+        )}
+      </div>
+    </>
+  );
+}
+
+function AgentsSidebar({
+  connections,
+  isPending,
+}: {
+  connections: AgentConnectionListItem[];
+  isPending: boolean;
+}) {
+  const { closeMobile } = useSidebar();
+  const pathname = useLocation({ select: (location) => location.pathname });
+  return (
+    <>
+      <nav aria-label="Agents" className="flex flex-col gap-0.5 py-1">
+        <Link
+          to="/agents"
+          onClick={closeMobile}
+          aria-current={pathname === "/agents/new" ? "page" : undefined}
+          className={cn(
+            "group flex items-center gap-2 rounded-md px-2 py-1.5 text-sm motion-colors hover:bg-sidebar-accent",
+            pathname === "/agents/new" && "bg-sidebar-accent",
+          )}
+        >
+          <SquarePen className="size-4 shrink-0 text-muted-foreground" />
+          <span className="flex-1">New agent</span>
+          <LinkPendingIndicator to="/agents" />
+        </Link>
+      </nav>
+      <SidebarAgentAttention connections={connections} />
+      <AdminAgentWorkspaces connections={connections} isPending={isPending} />
+    </>
+  );
+}
+
+function AdminAgentWorkspaces({
+  connections,
+  isPending,
+}: {
+  connections: AgentConnectionListItem[];
+  isPending: boolean;
+}) {
   const refresh = useRefreshAllAgentWorkspaces();
   const [organizing, setOrganizing] = useState(false);
   const doneRef = useRef<HTMLButtonElement>(null);
@@ -246,7 +323,6 @@ function AdminAgentWorkspaces() {
     previousOrganizing.current = organizing;
     (organizing ? doneRef : optionsRef).current?.focus();
   }, [organizing]);
-  useAgentConnectionSessionDirectory(connections);
   const { closeMobile, drawerRef } = useSidebar();
   const [providerFilter, setProviderFilter] = useState<AgentProviderId | null>(
     null,

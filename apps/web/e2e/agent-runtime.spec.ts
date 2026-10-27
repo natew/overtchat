@@ -2999,7 +2999,7 @@ test("ends OMP turns when the agent yields to background work and starts a new t
     await expect(page.getByText("Answer finished; job continues.", { exact: true })).toBeVisible();
     await expect(indicator).toHaveCount(0);
     // Directory activity follows a wake without an open transcript stream.
-    await page.goto("/");
+    await page.goto("/agents");
     await writeFile(control, "wake");
     await expect(sidebarWorking.first()).toBeVisible();
     await writeFile(control, "wait");

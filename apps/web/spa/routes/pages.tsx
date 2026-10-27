@@ -1,15 +1,19 @@
 import {
   createRoute,
   lazyRouteComponent,
+  Link,
   Outlet,
   redirect,
 } from "@tanstack/react-router";
-import { Activity } from "lucide-react";
+import { Activity, FolderPlus, SquareTerminal } from "lucide-react";
 import {
   isAgentProviderId,
   type AgentConnectionListItem,
 } from "@overtchat/agent-bridge";
 import { SidebarToggle } from "@/components/SidebarToggle";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { recentAgentSetups } from "@/lib/agents/setups";
 import { agentSessionDisplayTitle } from "@/lib/agents/sidebar";
 import { agentConnectionListQuery } from "@/lib/queries/agentConnections";
 import {
@@ -39,6 +43,56 @@ const LibraryBrowser = lazyRouteComponent(
   () => import("@/components/library/LibraryBrowser"),
   "LibraryBrowser",
 );
+/** Opens a new session with the most recently used agent and workspace. */
+export const agentsHomeRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/agents",
+  beforeLoad: ({ context }) => {
+    if (!context.isAdmin) throw redirect({ to: "/" });
+  },
+  loader: async ({ context }) => {
+    const connections = await context.queryClient.ensureQueryData(
+      agentConnectionListQuery,
+    );
+    const [setup] = recentAgentSetups(connections);
+    if (setup) {
+      throw redirect({
+        to: "/agents/new",
+        search: { workspaceId: setup.workspaceId, provider: setup.provider },
+        replace: true,
+      });
+    }
+  },
+  gcTime: 0,
+  pendingComponent: AppPending,
+  component: function AgentsHomePage() {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header data-titlebar className="flex h-12 shrink-0 items-center gap-2 px-3">
+          <SidebarToggle />
+          <span className="text-sm font-medium">Agents</span>
+        </header>
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <div className="max-w-sm">
+            <SquareTerminal aria-hidden="true" className="mx-auto size-8 text-muted-foreground" />
+            <h1 className="mt-3 text-xl font-semibold tracking-tight">Start an agent in a folder</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Add a folder on this server or over SSH, then choose which coding agent works in it.
+            </p>
+            <Link
+              to="/settings/connections"
+              search={{ add: "1" }}
+              className={cn(buttonVariants(), "mt-5")}
+            >
+              <FolderPlus /> Add workspace
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  },
+});
+
 export const newAgentSessionRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/agents/new",
@@ -60,8 +114,9 @@ export const newAgentSessionRoute = createRoute({
   },
   loaderDeps: ({ search: { workspaceId, provider } }) => ({ workspaceId, provider }),
   loader: async ({ context, deps: { workspaceId, provider } }) => {
+    // An unknown setup falls back to the Agents home's choice.
     if (!workspaceId || !provider || !isAgentProviderId(provider)) {
-      throw redirect({ to: "/" });
+      throw redirect({ to: "/agents", replace: true });
     }
     const connection = await findInListQuery(
       context.queryClient,
@@ -69,7 +124,7 @@ export const newAgentSessionRoute = createRoute({
       (item) => item.workspaces.some((workspace) => workspace.id === workspaceId),
     );
     const workspace = connection?.workspaces.find((item) => item.id === workspaceId);
-    if (!workspace) throw redirect({ to: "/" });
+    if (!workspace) throw redirect({ to: "/agents", replace: true });
     return { provider, workspace };
   },
   gcTime: 0,
@@ -114,7 +169,9 @@ export const agentSessionRoute = createRoute({
       item.sessions.some((session) => session.id === params.id),
     );
     const session = workspace?.sessions.find((item) => item.id === params.id);
-    if (!connection || !workspace || !session) throw redirect({ to: "/" });
+    if (!connection || !workspace || !session) {
+      throw redirect({ to: "/agents", replace: true });
+    }
     return {
       provider: connection.provider,
       hostLabel: connection.host.sshAlias || connection.host.name,
