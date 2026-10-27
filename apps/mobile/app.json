@@ -13,7 +13,8 @@
       "buildNumber": "28",
       "config": {
         "usesNonExemptEncryption": false
-      }
+      },
+      "deploymentTarget": "16.4"
     },
     "android": {
       "package": "com.overtchat.mobile",
@@ -82,7 +83,8 @@
         }
       ],
       "expo-notifications",
-      "./plugins/withIosSceneLifecycle.ts"
+      "./plugins/withIosSceneLifecycle.ts",
+      "./plugins/withIosResourceDeploymentTarget.ts"
     ],
     "experiments": {
       "typedRoutes": true,
