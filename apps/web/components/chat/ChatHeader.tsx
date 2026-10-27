@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { SidebarToggle } from "@/components/SidebarToggle";
 import type { UsageTotals } from "@/lib/usage/types";
 import { UsageIndicator } from "./UsageIndicator";
+import { ChatFilesButton } from "./ChatFiles";
 import { ShareChatButton } from "./ShareChatDialog";
 
 export function ChatHeader({
@@ -19,6 +20,7 @@ export function ChatHeader({
   onToggleTemporary,
   shareChatId,
   sharingDisabled,
+  files,
 }: {
   title: string | null;
   /** Shown as a breadcrumb before the title for chats in a project. */
@@ -30,6 +32,8 @@ export function ChatHeader({
   onToggleTemporary: () => void;
   shareChatId?: string;
   sharingDisabled?: boolean;
+  /** Toggles the panel with the conversation's files when it has any. */
+  files?: { count: number; open: boolean; onToggle: () => void };
 }) {
   return (
     <header data-titlebar className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
@@ -64,6 +68,7 @@ export function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center">
+        {files && files.count > 0 && <ChatFilesButton {...files} />}
         {shareChatId && <ShareChatButton chatId={shareChatId} disabled={sharingDisabled} />}
         <UsageIndicator
           contextUsage={contextUsage}

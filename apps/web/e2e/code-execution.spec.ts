@@ -409,6 +409,69 @@ test("runs code on an attachment, returns its files, and reuses them in a later 
   await expandRun(page, "Ran code · 1 file");
   await expect(page.locator("[data-code-run-file]", { hasText: "totals (2).csv" })).toBeVisible();
 
+  // The header's files button shows the panel with the conversation's
+  // outputs and uploads, newest first; each opens in the same panel.
+  const filesButton = page.getByRole("button", { name: "4 files" });
+  await filesButton.click();
+  await expect(filesButton).toHaveAttribute("aria-expanded", "true");
+  const filesPanel = page.locator("[data-files-panel]");
+  await expect(filesPanel.getByRole("list", { name: "Outputs" }).getByRole("listitem")).toHaveText([
+    /totals \(2\)\.csv\s*CSV · \d+ B/,
+    `totals.csvCSV · ${Buffer.byteLength(totalsCsv)} B`,
+    /totals\.png\s*PNG · /,
+  ]);
+  await expect(filesPanel.getByRole("list", { name: "Uploads" }).getByRole("listitem")).toHaveText([
+    "sales.csvCSV",
+  ]);
+  await page.screenshot({ path: testInfo.outputPath("chat-files-panel.png") });
+  await filesPanel.getByRole("button", { name: /sales\.csv/ }).click();
+  await expect(filesPanel).toHaveCount(0);
+  await expect(panel.getByRole("heading", { name: "sales.csv" })).toBeVisible();
+  await expect(panel.locator("[data-file-table] tbody tr")).toHaveCount(3);
+  // Back returns to the list, and the button hides the panel from any view.
+  await panel.getByRole("button", { name: "Back to files" }).click();
+  await filesPanel.getByRole("button", { name: /totals\.png/ }).click();
+  await expect(panel.getByRole("img", { name: "totals.png" })).toBeVisible();
+  await filesButton.click();
+  await expect(panel).toHaveCount(0);
+  await expect(filesButton).toHaveAttribute("aria-expanded", "false");
+
+  // The panel is resized from its edge and keeps the width when reopened.
+  await filesButton.click();
+  await filesPanel.getByRole("button", { name: /sales\.csv/ }).click();
+  const handle = page.getByRole("separator", { name: "Resize panel" });
+  const width = async () => Math.round((await panel.boundingBox())!.width);
+  const before = await width();
+  const edge = (await handle.boundingBox())!;
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(edge.x + edge.width / 2 - 100, edge.y + edge.height / 2, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(width).toBe(before + 100);
+  await page.screenshot({ path: testInfo.outputPath("chat-panel-resized.png") });
+  await page.keyboard.press("Escape");
+  await filesButton.click();
+  await filesPanel.getByRole("button", { name: /totals\.png/ }).click();
+  await expect(panel.getByRole("img", { name: "totals.png" })).toBeVisible();
+  expect(await width()).toBe(before + 100);
+  await handle.dblclick();
+  await expect.poll(width).toBe(before);
+
+  // In the Windows app the window controls sit over the panel's corner, and
+  // the panel's own buttons stay clear of them.
+  await page.evaluate(() => {
+    document.documentElement.setAttribute("data-desktop-shell", "win32");
+    document.documentElement.style.setProperty("--desktop-window-controls-width", "138px");
+  });
+  const closeFile = (await panel.getByRole("button", { name: "Close file" }).boundingBox())!;
+  expect(closeFile.x + closeFile.width).toBeLessThanOrEqual(page.viewportSize()!.width - 138);
+  const chatHeader = page.locator("header[data-titlebar]:not([data-side-panel-header])");
+  await expect(chatHeader).toHaveCSS("padding-right", "12px");
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(chatHeader).toHaveCSS("padding-right", "150px");
+  await page.evaluate(() => document.documentElement.removeAttribute("data-desktop-shell"));
+
   // Everything survives a reload, and the files are in the library.
   await page.reload();
   await expect(page.locator("[data-code-file-image]").getByRole("img", { name: "totals.png" })).toBeVisible();
