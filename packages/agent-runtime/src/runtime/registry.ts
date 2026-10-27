@@ -10,6 +10,8 @@ import type {
   AgentRuntimeEnvelope,
   AgentRuntimeSnapshot,
   AgentRuntimeStatus,
+  AgentSessionAttention,
+  AgentSessionDirectoryEntry,
   AgentSlashCommand,
   AgentSessionCommand,
   AgentSessionLaunchConfig,
@@ -39,6 +41,7 @@ import type {
 } from "@overtchat/agent-runtime/providers/types";
 import type { HostTarget } from "@overtchat/agent-runtime/runtime/process";
 import { AgentUsagePoller } from "./usage-poller";
+import { AgentTurnTracker, sessionAttention } from "./attention";
 
 const MAX_REPLAY_EVENTS = 500;
 const MODEL_DISCOVERY_TIMEOUT_MS = 120_000;
@@ -304,6 +307,9 @@ export class AgentSessionRuntime {
     | NonNullable<AgentRuntimeSnapshot["pendingInteraction"]>
     | undefined;
   private pendingInteractionTimer: NodeJS.Timeout | undefined;
+  private pendingInteractionAt = 0;
+  private attention: AgentSessionAttention | undefined;
+  private readonly turns: AgentTurnTracker;
   private error: string | undefined;
   private readonly usagePoller?: AgentUsagePoller;
   private usageRevisions = { tokens: 0, cost: 0, contextUsage: 0 };
@@ -361,6 +367,7 @@ export class AgentSessionRuntime {
     this.queuedMessages = restoredQueue.messages;
     this.activeTurnStartedAt =
       this.status === "running" ? Date.now() : null;
+    this.turns = new AgentTurnTracker(this.status, this.activeTurnStartedAt);
     this.scheduleIdleStop();
     if (
       restoredQueue.changed ||
@@ -479,6 +486,7 @@ export class AgentSessionRuntime {
         this.pendingInteraction = event as NonNullable<
           AgentRuntimeSnapshot["pendingInteraction"]
         >;
+        this.pendingInteractionAt = Date.now();
         if (
           typeof event.timeout === "number" &&
           Number.isFinite(event.timeout) &&
@@ -526,6 +534,10 @@ export class AgentSessionRuntime {
           this.error = event.error;
         }
       }
+      if (event.type === "turn_end" && event.status === "failed") {
+        this.turns.markFailed();
+      }
+      if (event.type === "message_end") this.turns.observeReply(event.message);
       this.publish({ type: "runtime_event", data: event });
       if (settleRejectedPrompt) {
         void this.settleAfterProviderTerminal();
@@ -598,6 +610,20 @@ export class AgentSessionRuntime {
 
   get provider(): AgentProviderId {
     return this.adapter.provider;
+  }
+
+  /** Status summary for session lists and notifications. */
+  directoryStatus(): Omit<AgentSessionDirectoryEntry, "sessionId"> {
+    const request = this.pendingInteraction;
+    if (request && this.attention?.id !== request.id) {
+      this.attention = sessionAttention(request, this.pendingInteractionAt);
+    }
+    return {
+      runtimeStatus: this.status,
+      turnStartedAt: this.activeTurnStartedAt,
+      attention: request ? (this.attention ?? null) : null,
+      lastTurn: this.turns.lastTurn ?? null,
+    };
   }
 
   snapshot(): AgentRuntimeSnapshot {
@@ -1154,6 +1180,7 @@ export class AgentSessionRuntime {
 
   async stop(): Promise<void> {
     if (this.stopped) return;
+    this.turns.requestStop();
     this.stopped = true;
     this.activityRevision += 1;
     this.usagePoller?.stop();
@@ -1449,6 +1476,7 @@ export class AgentSessionRuntime {
     if (this.status !== "running") {
       return Promise.resolve();
     }
+    this.turns.requestStop();
     const operation = this.client.abort().then(async (result) => {
       // Abort is foreground-only: background work keeps running and a later
       // wake starts a new turn.
@@ -1469,6 +1497,7 @@ export class AgentSessionRuntime {
     });
     const settled = operation
       .catch((error) => {
+        this.turns.cancelStop();
         this.error = errorMessage(error);
         this.publish({
           type: "runtime_event",
@@ -1963,6 +1992,14 @@ export class AgentSessionRuntime {
       envelope.type === "snapshot"
         ? this.envelope("snapshot", envelope.data)
         : this.envelope("runtime_event", envelope.data);
+    this.turns.observe(
+      {
+        status: this.status,
+        startedAt: this.activeTurnStartedAt,
+        error: this.error,
+      },
+      () => this.messages,
+    );
     this.replay.push(sequenced);
     if (this.replay.length > MAX_REPLAY_EVENTS) this.replay.shift();
     for (const subscriber of this.subscribers) subscriber(sequenced);
