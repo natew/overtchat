@@ -60,6 +60,7 @@ function png(width: number, height: number, color: (x: number, y: number) => num
 
 const sales = "region,total\nnorth,3\nsouth,5\nnorth,4\n";
 const totalsCsv = "region,total\nnorth,7\nsouth,5\n";
+const sharesCsv = "region,total,share\nnorth,7,0.58\nsouth,5,0.42\n";
 const analyze = [
   "import pandas as pd",
   "import matplotlib.pyplot as plt",
@@ -142,7 +143,7 @@ function fakeRun(code: string) {
     return {
       ...result,
       stdout: "region  total  share\n north      7   0.58\n south      5   0.42\n",
-      files: [file("totals.csv", Buffer.from("region,total,share\nnorth,7,0.58\nsouth,5,0.42\n"))],
+      files: [file("totals.csv", Buffer.from(sharesCsv))],
     };
   }
   return {
@@ -395,29 +396,30 @@ test("runs code on an attachment, returns its files, and reuses them in a later 
   await expect(run.locator("[data-code-run-file]", { hasText: "totals.csv" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("code-run.png") });
 
-  // A later run reads the files earlier runs saved, newest first, and a
-  // returned file with a taken name gets a unique one.
+  // A later run reads the files earlier runs saved, newest first. Saving
+  // totals.csv again replaces it, so the first reply's link shows the new
+  // file, while the run keeps the file it made.
   await send(page, "Add each region's share of the total");
   await expect(page.getByText("North has 58% of the total.", { exact: true })).toBeVisible();
   if (!realSandbox) {
     expect([...sandboxRuns[1].files.keys()]).toEqual(["totals.csv", "totals.png", "sales.csv"]);
     expect(sandboxRuns[1].files.get("totals.csv")).toBe(totalsCsv);
   }
-  expect(toolResult(chatRequests.at(-1)!)).toContain("- totals (2).csv (text/csv, ");
-  // That reply links nothing, so its file stays in its run.
-  await expect(page.locator("[data-code-file-card]", { hasText: "totals (2).csv" })).toHaveCount(0);
+  expect(toolResult(chatRequests.at(-1)!)).toContain(`- totals.csv (text/csv, ${Buffer.byteLength(sharesCsv)} B)`);
+  await expect(table).toContainText(`CSV · ${Buffer.byteLength(sharesCsv)} B`);
   await expandRun(page, "Ran code · 1 file");
-  await expect(page.locator("[data-code-run-file]", { hasText: "totals (2).csv" })).toBeVisible();
+  await expect(
+    page.locator("[data-code-run]").last().locator("[data-code-run-file]", { hasText: "totals.csv" }),
+  ).toBeVisible();
 
   // The header's files button shows the panel with the conversation's
   // outputs and uploads, newest first; each opens in the same panel.
-  const filesButton = page.getByRole("button", { name: "4 files" });
+  const filesButton = page.getByRole("button", { name: "3 files" });
   await filesButton.click();
   await expect(filesButton).toHaveAttribute("aria-expanded", "true");
   const filesPanel = page.locator("[data-files-panel]");
   await expect(filesPanel.getByRole("list", { name: "Outputs" }).getByRole("listitem")).toHaveText([
-    /totals \(2\)\.csv\s*CSV · \d+ B/,
-    `totals.csvCSV · ${Buffer.byteLength(totalsCsv)} B`,
+    `totals.csvCSV · ${Buffer.byteLength(sharesCsv)} B`,
     /totals\.png\s*PNG · /,
   ]);
   await expect(filesPanel.getByRole("list", { name: "Uploads" }).getByRole("listitem")).toHaveText([
@@ -479,7 +481,7 @@ test("runs code on an attachment, returns its files, and reuses them in a later 
   const library = await (await page.request.get("/api/library")).json();
   expect(library.items.map((item: { filename: string }) => item.filename).sort()).toEqual([
     "sales.csv",
-    "totals (2).csv",
+    "totals.csv",
     "totals.csv",
     "totals.png",
   ]);
@@ -500,7 +502,7 @@ test("runs code on an attachment, returns its files, and reuses them in a later 
     await expect(sharedPanel.locator("[data-file-table] tbody tr")).toHaveCount(2);
     const sharedDownload = reader.waitForEvent("download");
     await sharedPanel.getByLabel("Download file").click();
-    expect(await readFile((await (await sharedDownload).path())!, "utf8")).toBe(totalsCsv);
+    expect(await readFile((await (await sharedDownload).path())!, "utf8")).toBe(sharesCsv);
     await reader.screenshot({ path: testInfo.outputPath("code-run-shared.png") });
   } finally {
     await anonymous.close();
@@ -569,7 +571,7 @@ test("a live tool-calling model analyzes data, edits an image and writes a Word 
   const saved = async (chatId: string) => {
     const response = await page.request.get(`/api/chat/${chatId}/messages`);
     return response.ok()
-      ? ((await response.json()).messages as Array<{ role: string; parts: SavedPart[] }>)
+      ? ((await response.json()).messages as Array<{ id: string; role: string; parts: SavedPart[] }>)
       : [];
   };
   // Each turn is done once its answer is saved and the stream has ended.
@@ -597,7 +599,7 @@ test("a live tool-calling model analyzes data, edits an image and writes a Word 
     const files = latest.parts.flatMap((part) =>
       part.type === "tool-run_python" && part.state === "output-available" ? (part.output?.files ?? []) : [],
     );
-    return { chatId: id, files };
+    return { chatId: id, messageId: latest.id, files };
   };
 
   const regions = ["north", "south", "east", "west"];
@@ -633,6 +635,23 @@ test("a live tool-calling model analyzes data, edits an image and writes a Word 
   const blurredBytes = await (await page.request.get(blurred!.url)).body();
   expect(blurredBytes.subarray(0, 8)).toEqual(photo.subarray(0, 8));
   expect(blurredBytes.equals(photo)).toBe(false);
+
+  // Refining a file, models tend to save over its name. Each image the reply
+  // shows is the newest file with its name.
+  const refine = await turn(chatId, "Now also blur the right half of that result, and show me the image.");
+  expect(refine.files.some((file) => file.mediaType === "image/png")).toBe(true);
+  const runFiles = (await saved(chatId)).flatMap((message) =>
+    message.parts.flatMap((part) =>
+      part.type === "tool-run_python" && part.state === "output-available" ? (part.output?.files ?? []) : [],
+    ),
+  );
+  testInfo.annotations.push({ type: "saved files", description: runFiles.map((file) => file.name).join(", ") });
+  const newest = new Map(runFiles.map((file) => [file.name.toLowerCase(), file.url]));
+  const shown = page.locator(`[data-message-id="${refine.messageId}"] [data-code-file-image] img`);
+  await expect(shown.first()).toBeVisible();
+  for (const image of await shown.all()) {
+    expect(await image.getAttribute("src")).toBe(newest.get((await image.getAttribute("alt"))!.toLowerCase()));
+  }
 
   const writing = await turn(
     chatId,
