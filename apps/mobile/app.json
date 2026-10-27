@@ -81,7 +81,8 @@
           }
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "./plugins/withIosSceneLifecycle.ts"
     ],
     "experiments": {
       "typedRoutes": true,
